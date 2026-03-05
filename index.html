@@ -19,16 +19,22 @@
     .err{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,0,110,.12);border:1px solid rgba(255,0,110,.35);white-space:pre-wrap;font-size:12.5px;line-height:1.35}
     .meter{margin-top:10px;height:12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);overflow:hidden}
     .fill{height:100%;width:0%;background:rgba(58,134,255,.9)}
+    .slider{width:100%}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);font-size:12px;margin-right:8px}
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Open with cache-buster if needed: <span class="muted">?v=100</span></p>
+    <p>Mic works + RMS moves ✅. This version adds YIN pitch detection + an idle strobe so you can always see animation.</p>
 
     <button id="startBtn">Start microphone</button>
-
     <div id="err" class="err"></div>
+
+    <div style="margin-top:10px">
+      <span class="pill" id="gatePill">Gate: 0.003</span>
+      <span class="pill" id="pitchPill">Pitch: —</span>
+    </div>
 
     <div class="row">
       <div class="box">
@@ -41,16 +47,19 @@
           <div class="muted">Input level</div>
           <div class="meter"><div class="fill" id="lvl"></div></div>
           <div class="muted" id="rms">RMS: —</div>
-          <div class="muted" id="dbg">Strobe: —</div>
+        </div>
+
+        <div style="margin-top:12px">
+          <div class="muted">Gate (lower = more sensitive)</div>
+          <input id="gate" class="slider" type="range" min="0.001" max="0.020" step="0.001" value="0.003">
+          <div class="muted" style="font-size:12px">If Pitch stays “—”, slide gate down to 0.002 or 0.001.</div>
         </div>
       </div>
 
       <div class="box">
         <div class="muted">Strobe</div>
         <canvas id="strobe" width="900" height="240"></canvas>
-        <div class="muted" style="margin-top:8px">
-          This version moves even for tiny offsets.
-        </div>
+        <div class="muted" id="dbg" style="margin-top:8px;font-size:12px">Strobe: —</div>
       </div>
     </div>
   </div>
@@ -75,10 +84,14 @@
   const rmsEl = document.getElementById('rms');
   const dbgEl = document.getElementById('dbg');
 
+  const gateSlider = document.getElementById('gate');
+  const gatePill = document.getElementById('gatePill');
+  const pitchPill = document.getElementById('pitchPill');
+
   const canvas = document.getElementById('strobe');
   const ctx = canvas.getContext('2d');
 
-  // Note helpers
+  // ----- helpers -----
   const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
   function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
@@ -89,88 +102,85 @@
     return name+oct;
   }
   function centsOff(f, ref){ return 1200*Math.log2(f/ref); }
-
   function rmsOf(buf){
     let s=0;
     for(let i=0;i<buf.length;i++){ const v=buf[i]; s += v*v; }
     return Math.sqrt(s/buf.length);
   }
 
-  // Autocorrelation with parabolic interpolation
-  function autoCorrelateParabolic(buf, sampleRate){
-    const SIZE = buf.length;
+  // ----- YIN pitch detector -----
+  // Returns {freq, conf} or null
+  function yinPitch(buf, sampleRate, minFreq=35, maxFreq=650){
+    const N = buf.length;
 
-    const rms = rmsOf(buf);
-    const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
-    lvlFill.style.width = pct.toFixed(1) + '%';
-    rmsEl.textContent = 'RMS: ' + rms.toFixed(4);
+    const minTau = Math.floor(sampleRate / maxFreq);
+    const maxTau = Math.min(Math.floor(sampleRate / minFreq), N - 2);
+    if (maxTau <= minTau + 2) return null;
 
-    if (rms < 0.004) return null;
+    const d = new Float32Array(maxTau + 1);
 
-    const b = new Float32Array(SIZE);
-    let mean=0;
-    for(let i=0;i<SIZE;i++) mean += buf[i];
-    mean/=SIZE;
-    for(let i=0;i<SIZE;i++) b[i]=buf[i]-mean;
-
-    const minFreq = 35, maxFreq = 650;
-    const minLag = Math.floor(sampleRate/maxFreq);
-    const maxLag = Math.min(Math.floor(sampleRate/minFreq), Math.floor(SIZE/2));
-
-    let bestLag=-1;
-    let bestScore=0;
-
-    for(let lag=minLag; lag<=maxLag; lag++){
-      let sum=0;
-      for(let i=0;i<SIZE-lag;i++){
-        sum += b[i]*b[i+lag];
+    for (let tau = 1; tau <= maxTau; tau++){
+      let sum = 0;
+      for (let i = 0; i < N - tau; i++){
+        const delta = buf[i] - buf[i + tau];
+        sum += delta * delta;
       }
-      const score = sum/(SIZE-lag);
-      if(score > bestScore){
-        bestScore = score;
-        bestLag = lag;
+      d[tau] = sum;
+    }
+
+    const cmnd = new Float32Array(maxTau + 1);
+    cmnd[0] = 1;
+    let run = 0;
+    for (let tau = 1; tau <= maxTau; tau++){
+      run += d[tau];
+      cmnd[tau] = d[tau] * tau / (run || 1);
+    }
+
+    // threshold: higher = stricter, lower = more tolerant
+    const threshold = 0.18;
+    let tau = -1;
+
+    for (let t = minTau; t <= maxTau; t++){
+      if (cmnd[t] < threshold){
+        while (t + 1 <= maxTau && cmnd[t + 1] < cmnd[t]) t++;
+        tau = t;
+        break;
       }
     }
 
-    if(bestLag === -1 || bestScore < 0.10) return null;
+    if (tau === -1) return null;
 
-    function corrAt(lag){
-      let sum=0;
-      for(let i=0;i<SIZE-lag;i++) sum += b[i]*b[i+lag];
-      return sum/(SIZE-lag);
-    }
+    // parabolic interpolation
+    const t0 = tau - 1, t1 = tau, t2 = tau + 1;
+    if (t0 < 1 || t2 > maxTau) return null;
 
-    const lag0 = Math.max(minLag, bestLag-1);
-    const lag1 = bestLag;
-    const lag2 = Math.min(maxLag, bestLag+1);
+    const s0 = cmnd[t0], s1 = cmnd[t1], s2 = cmnd[t2];
+    const denom = (2*s1 - s0 - s2);
+    const betterTau = denom ? (t1 + (s0 - s2) / (2*denom)) : t1;
 
-    if (lag0 === lag1 || lag2 === lag1) {
-      return sampleRate / bestLag;
-    }
+    const freq = sampleRate / betterTau;
+    const conf = 1 - cmnd[tau];
 
-    const y0 = corrAt(lag0);
-    const y1 = corrAt(lag1);
-    const y2 = corrAt(lag2);
-
-    const denom = (y0 - 2*y1 + y2);
-    const shift = denom ? (0.5 * (y0 - y2) / denom) : 0;
-
-    const refinedLag = lag1 + shift;
-    if (!Number.isFinite(refinedLag) || refinedLag <= 0) return sampleRate / bestLag;
-
-    return sampleRate / refinedLag;
+    if (!Number.isFinite(freq) || freq < minFreq || freq > maxFreq) return null;
+    return { freq, conf };
   }
 
-  // STROBE: no dead-zone, always moves for any non-zero cents
+  // ----- gate -----
+  let gate = Number(gateSlider.value);
+  gatePill.textContent = `Gate: ${gate.toFixed(3)}`;
+  gateSlider.addEventListener('input', () => {
+    gate = Number(gateSlider.value);
+    gatePill.textContent = `Gate: ${gate.toFixed(3)}`;
+  });
+
+  // ----- strobe -----
   let strobeOffset = 0;
   let lastCents = 0;
+  let hasPitch = false;
 
-  function drawStrobe(cents){
-    if(!Number.isFinite(cents)) cents = 0;
-
+  function drawStrobe(){
     const w = canvas.width, h = canvas.height;
     ctx.clearRect(0,0,w,h);
-
     ctx.fillStyle = '#07080d';
     ctx.fillRect(0,0,w,h);
 
@@ -178,31 +188,27 @@
     ctx.fillStyle='rgba(255,255,255,.85)';
     ctx.fillRect(w/2-1,0,2,h);
 
-    // scale
     const clamp = 50;
-    const c = Math.max(-clamp, Math.min(clamp, cents));
+    let c = Math.max(-clamp, Math.min(clamp, lastCents));
     const abs = Math.abs(c);
 
-    // speed mapping: even tiny cents produce visible drift
-    const maxSpeed = 28;
-    const minSpeed = 0.8;          // <-- always visible
-    const eps = 0.001;             // <-- treat super tiny as 0
-    let speed = 0;
-
-    if (abs > eps) {
+    // If no pitch, idle scroll slowly so you can SEE movement
+    let speed;
+    if (!hasPitch){
+      speed = 1.2; // constant idle speed
+    } else {
+      const maxSpeed = 28;
+      const minSpeed = 0.8;
       speed = minSpeed + (abs/clamp) * (maxSpeed - minSpeed);
       speed *= (c < 0 ? -1 : 1);
     }
 
     strobeOffset += speed;
 
-    const stripeW = 24;
-    const gapW = 14;
-    const period = stripeW + gapW;
-
+    const stripeW = 24, gapW = 14, period = stripeW + gapW;
     strobeOffset = ((strobeOffset % period) + period) % period;
 
-    const alpha = 0.40 + Math.max(0.2, 1-(abs/clamp))*0.45;
+    const alpha = hasPitch ? (0.40 + Math.max(0.2, 1-(abs/clamp))*0.45) : 0.22;
     ctx.fillStyle = `rgba(255,190,11,${alpha})`;
 
     for(let x=-period*2; x<w+period*2; x+=period){
@@ -214,22 +220,18 @@
       ctx.restore();
     }
 
-    dbgEl.textContent = `Strobe: cents=${c.toFixed(4)} speed=${speed.toFixed(4)} offset=${strobeOffset.toFixed(2)}`;
+    dbgEl.textContent = `Strobe: cents=${c.toFixed(3)} speed=${speed.toFixed(3)} offset=${strobeOffset.toFixed(2)} pitch=${hasPitch ? 'YES' : 'NO (idle)'}`;
+    requestAnimationFrame(drawStrobe);
   }
+  requestAnimationFrame(drawStrobe);
 
-  function strobeLoop(){
-    drawStrobe(lastCents);
-    requestAnimationFrame(strobeLoop);
-  }
-  requestAnimationFrame(strobeLoop);
-
-  // Audio
+  // ----- audio loop -----
   let audioCtx, analyser, buf, rafId, stream;
 
   async function start(){
     err.style.display='none';
-    startBtn.disabled=true;
-    startBtn.textContent='Starting…';
+    startBtn.disabled = true;
+    startBtn.textContent = 'Starting…';
 
     try{
       stream = await navigator.mediaDevices.getUserMedia({
@@ -237,7 +239,7 @@
       });
 
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if(audioCtx.state !== 'running') await audioCtx.resume();
+      if (audioCtx.state !== 'running') await audioCtx.resume();
 
       const src = audioCtx.createMediaStreamSource(stream);
       analyser = audioCtx.createAnalyser();
@@ -250,26 +252,45 @@
       const loop = () => {
         analyser.getFloatTimeDomainData(buf);
 
-        const f = autoCorrelateParabolic(buf, audioCtx.sampleRate);
+        const rms = rmsOf(buf);
+        const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
+        lvlFill.style.width = pct.toFixed(1) + '%';
+        rmsEl.textContent = 'RMS: ' + rms.toFixed(4);
 
-        if(!f){
-          noteEl.textContent='—';
-          freqEl.textContent='— Hz';
-          centsEl.textContent='—';
+        if (rms < gate){
+          hasPitch = false;
+          pitchPill.textContent = 'Pitch: —';
+          noteEl.textContent = '—';
+          freqEl.textContent = '— Hz';
+          centsEl.textContent = '—';
           lastCents = 0;
           rafId = requestAnimationFrame(loop);
           return;
         }
 
-        const m = freqToMidi(f);
-        const nearestMidi = Math.round(m);
-        const ref = midiToFreq(nearestMidi);
+        const res = yinPitch(buf, audioCtx.sampleRate, 35, 650);
+        if (!res){
+          hasPitch = false;
+          pitchPill.textContent = 'Pitch: —';
+          noteEl.textContent = '—';
+          freqEl.textContent = '— Hz';
+          centsEl.textContent = '—';
+          lastCents = 0;
+          rafId = requestAnimationFrame(loop);
+          return;
+        }
 
+        hasPitch = true;
+        pitchPill.textContent = `Pitch: ${res.freq.toFixed(1)} Hz (conf ${res.conf.toFixed(2)})`;
+
+        const f = res.freq;
+        const m = freqToMidi(f);
+        const ref = midiToFreq(Math.round(m));
         const cents = centsOff(f, ref);
 
         noteEl.textContent = midiToName(m);
         freqEl.textContent = f.toFixed(2) + ' Hz';
-        centsEl.textContent = (cents>=0?'+':'') + cents.toFixed(3) + ' cents';
+        centsEl.textContent = (cents>=0?'+':'') + cents.toFixed(2) + ' cents';
 
         lastCents = cents;
 
@@ -277,10 +298,10 @@
       };
 
       loop();
-      startBtn.textContent='Mic running';
+      startBtn.textContent = 'Mic running';
     } catch(e){
-      startBtn.disabled=false;
-      startBtn.textContent='Start microphone';
+      startBtn.disabled = false;
+      startBtn.textContent = 'Start microphone';
       showErr('Mic start failed:\n' + (e?.message || String(e)));
     }
   }
@@ -292,8 +313,9 @@
       if(rafId) cancelAnimationFrame(rafId);
       if(stream) stream.getTracks().forEach(t=>t.stop());
       if(audioCtx) audioCtx.close();
-      startBtn.disabled=false;
-      startBtn.textContent='Start microphone';
+      startBtn.disabled = false;
+      startBtn.textContent = 'Start microphone';
+      hasPitch = false;
       lastCents = 0;
     }
   });
