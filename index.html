@@ -6,17 +6,11 @@
   <title>Strobe Guitar Tuner</title>
   <style>
     :root{
-      --bg:#0b0c10;
-      --card:#14161c;
-      --panel:#0f1117;
-      --text:#e8e8e8;
-      --muted: rgba(232,232,232,.75);
+      --bg:#0b0c10; --card:#14161c; --panel:#0f1117;
+      --text:#e8e8e8; --muted: rgba(232,232,232,.75);
       --border: rgba(255,255,255,.10);
-      --btn:#3a86ff;
-      --btn2:#2b2f3a;
-      --ok:#06d6a0;
-      --warn:#ffbe0b;
-      --bad:#ff006e;
+      --btn:#3a86ff; --btn2:#2b2f3a;
+      --ok:#06d6a0; --warn:#ffbe0b; --bad:#ff006e;
     }
     *{ box-sizing:border-box; }
     body{
@@ -25,7 +19,7 @@
       background:var(--bg); color:var(--text);
     }
     .card{
-      max-width:720px; margin:0 auto;
+      max-width:760px; margin:0 auto;
       padding:16px; border-radius:16px;
       background:var(--card);
       box-shadow: 0 10px 28px rgba(0,0,0,.35);
@@ -47,7 +41,7 @@
     .btn2{ background:var(--btn2); }
     .row{ display:flex; gap:12px; margin-top:12px; flex-wrap:wrap; }
     .box{
-      flex:1; min-width:220px;
+      flex:1; min-width:240px;
       padding:12px; border-radius:14px;
       background:var(--panel);
       border:1px solid var(--border);
@@ -96,20 +90,15 @@
     .centerLine:before{
       content:"";
       position:absolute;
-      left:50%;
-      top:0;
+      left:50%; top:0;
       transform: translateX(-1px);
-      width:2px;
-      height:120px;
+      width:2px; height:120px;
       background: rgba(255,255,255,.75);
       box-shadow: 0 0 16px rgba(255,255,255,.20);
     }
     .legend{
-      display:flex;
-      justify-content:space-between;
-      margin-top:8px;
-      font-size:12px;
-      color:var(--muted);
+      display:flex; justify-content:space-between;
+      margin-top:8px; font-size:12px; color:var(--muted);
     }
     .statusOk{ color:var(--ok); font-weight:900; }
     .statusWarn{ color:var(--warn); font-weight:900; }
@@ -130,12 +119,27 @@
       font-size: 12.5px;
       line-height: 1.35;
     }
+
+    .meter{
+      margin-top:10px;
+      height:12px;
+      border-radius:999px;
+      background: rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      overflow:hidden;
+    }
+    .meterFill{
+      height:100%;
+      width:0%;
+      background: rgba(58,134,255,.9);
+    }
+    input[type="range"]{ width:100%; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Tap <b>Start microphone</b>. Use <b>Manual lock</b> once the note is correct (especially on 12-string).</p>
+    <p>Tap <b>Start microphone</b>. If you see “Mic running” but no notes, check the <b>Input Level</b> bar and lower the gate.</p>
 
     <button id="startBtn">Start microphone</button>
 
@@ -150,7 +154,7 @@
 
     <div style="margin-top:8px;">
       <span class="pill" id="lockPill">Mode: Auto-lock</span>
-      <span class="pill" id="gatePill" style="margin-left:8px;">Gate: ON</span>
+      <span class="pill" id="gatePill" style="margin-left:8px;">Gate: 0.006</span>
       <span class="pill" id="smoothPill" style="margin-left:8px;">Smoothing: ON</span>
     </div>
 
@@ -162,11 +166,24 @@
         <div class="big" id="note">—</div>
         <div class="muted" id="freq">— Hz</div>
         <div class="hint" id="nearestStringHint"></div>
+
+        <div style="margin-top:10px;">
+          <div class="small">Input Level</div>
+          <div class="meter"><div class="meterFill" id="lvlFill"></div></div>
+          <div class="small" id="lvlText" style="margin-top:6px;">RMS: —</div>
+        </div>
       </div>
+
       <div class="box">
         <div class="small">Offset</div>
         <div class="big" id="cents">—</div>
         <div class="muted" id="status">Play a string</div>
+
+        <div style="margin-top:12px;">
+          <div class="small">Noise Gate (lower = more sensitive)</div>
+          <input id="gateSlider" type="range" min="0.001" max="0.03" step="0.001" value="0.006" />
+          <div class="small muted">Tip: if nothing happens, slide this down to 0.003 or 0.002.</div>
+        </div>
       </div>
     </div>
 
@@ -196,169 +213,183 @@
       <canvas id="strobe" width="1000" height="240"></canvas>
       <div class="centerLine"></div>
       <div class="legend">
-        <span>Flat</span>
-        <span>In tune</span>
-        <span>Sharp</span>
+        <span>Flat</span><span>In tune</span><span>Sharp</span>
       </div>
     </div>
 
     <p class="small" style="margin-top:14px;">
-      Microphone access needs <b>HTTPS</b>. GitHub Pages is HTTPS, so it should prompt for mic permission.
+      If the input level bar moves but notes don’t: lower the gate a bit, pluck near the bridge, and mute other strings.
     </p>
   </div>
 
 <script>
 (() => {
-  // -------- Error UI --------
+  // ----- error UI -----
   const errBox = document.getElementById("errBox");
-  function showErr(msg) {
-    if (!errBox) return;
-    errBox.style.display = "block";
-    errBox.textContent = msg;
-  }
-  window.addEventListener("error", (e) => {
-    showErr("JavaScript error:\n" + (e.message || e.type) + "\n" + (e.filename || "") + ":" + (e.lineno || ""));
-  });
-  window.addEventListener("unhandledrejection", (e) => {
-    showErr("Unhandled promise rejection:\n" + (e.reason?.message || String(e.reason)));
-  });
+  function showErr(msg){ errBox.style.display="block"; errBox.textContent=msg; }
+  window.addEventListener("error", (e)=> showErr("JavaScript error:\n"+(e.message||e.type)+"\n"+(e.filename||"")+":"+ (e.lineno||"")));
+  window.addEventListener("unhandledrejection",(e)=> showErr("Unhandled rejection:\n"+(e.reason?.message||String(e.reason))));
 
-  // -------- Grab UI --------
-  const startBtn = document.getElementById('startBtn');
-  const autoLockBtn = document.getElementById('autoLockBtn');
-  const manualLockBtn = document.getElementById('manualLockBtn');
-  const lockPill = document.getElementById('lockPill');
-  const gatePill = document.getElementById('gatePill');
-  const smoothPill = document.getElementById('smoothPill');
+  // ----- UI -----
+  const startBtn = document.getElementById("startBtn");
+  const autoLockBtn = document.getElementById("autoLockBtn");
+  const manualLockBtn = document.getElementById("manualLockBtn");
+  const lockPill = document.getElementById("lockPill");
+  const gatePill = document.getElementById("gatePill");
+  const smoothPill = document.getElementById("smoothPill");
 
-  const noteEl = document.getElementById('note');
-  const freqEl = document.getElementById('freq');
-  const centsEl = document.getElementById('cents');
-  const statusEl = document.getElementById('status');
-  const nearestStringHintEl = document.getElementById('nearestStringHint');
+  const noteEl = document.getElementById("note");
+  const freqEl = document.getElementById("freq");
+  const centsEl = document.getElementById("cents");
+  const statusEl = document.getElementById("status");
+  const nearestStringHintEl = document.getElementById("nearestStringHint");
 
-  const presetEl = document.getElementById('preset');
-  const targetEl = document.getElementById('target');
-  const courseHintEl = document.getElementById('courseHint');
-  const twelveWrapEl = document.getElementById('twelveWrap');
-  const twelvePartnersEl = document.getElementById('twelvePartners');
+  const presetEl = document.getElementById("preset");
+  const targetEl = document.getElementById("target");
+  const courseHintEl = document.getElementById("courseHint");
+  const twelveWrapEl = document.getElementById("twelveWrap");
+  const twelvePartnersEl = document.getElementById("twelvePartners");
 
-  const canvas = document.getElementById('strobe');
-  const ctx = canvas?.getContext('2d');
-  if (!ctx) showErr("Canvas context failed. Try another browser (Chrome recommended).");
+  const lvlFill = document.getElementById("lvlFill");
+  const lvlText = document.getElementById("lvlText");
+  const gateSlider = document.getElementById("gateSlider");
 
-  // -------- Presets --------
+  const canvas = document.getElementById("strobe");
+  const ctx = canvas.getContext("2d");
+
+  // ----- presets -----
   const PRESETS = {
     gtr_std: [
-      { key: "E2", label: "E2 (6th)", freq: 82.4069 },
-      { key: "A2", label: "A2 (5th)", freq: 110.0000 },
-      { key: "D3", label: "D3 (4th)", freq: 146.8324 },
-      { key: "G3", label: "G3 (3rd)", freq: 196.0000 },
-      { key: "B3", label: "B3 (2nd)", freq: 246.9417 },
-      { key: "E4", label: "E4 (1st)", freq: 329.6276 },
+      { key:"E2", label:"E2 (6th)", freq:82.4069 },
+      { key:"A2", label:"A2 (5th)", freq:110.0 },
+      { key:"D3", label:"D3 (4th)", freq:146.8324 },
+      { key:"G3", label:"G3 (3rd)", freq:196.0 },
+      { key:"B3", label:"B3 (2nd)", freq:246.9417 },
+      { key:"E4", label:"E4 (1st)", freq:329.6276 },
     ],
     gtr_dropd: [
-      { key: "D2", label: "D2 (6th)", freq: 73.4162 },
-      { key: "A2", label: "A2 (5th)", freq: 110.0000 },
-      { key: "D3", label: "D3 (4th)", freq: 146.8324 },
-      { key: "G3", label: "G3 (3rd)", freq: 196.0000 },
-      { key: "B3", label: "B3 (2nd)", freq: 246.9417 },
-      { key: "E4", label: "E4 (1st)", freq: 329.6276 },
+      { key:"D2", label:"D2 (6th)", freq:73.4162 },
+      { key:"A2", label:"A2 (5th)", freq:110.0 },
+      { key:"D3", label:"D3 (4th)", freq:146.8324 },
+      { key:"G3", label:"G3 (3rd)", freq:196.0 },
+      { key:"B3", label:"B3 (2nd)", freq:246.9417 },
+      { key:"E4", label:"E4 (1st)", freq:329.6276 },
     ],
     gtr_12: [
-      { key: "E2", label: "E2 (6th course - main)", freq: 82.4069 },
-      { key: "A2", label: "A2 (5th course - main)", freq: 110.0000 },
-      { key: "D3", label: "D3 (4th course - main)", freq: 146.8324 },
-      { key: "G3", label: "G3 (3rd course - main)", freq: 196.0000 },
-      { key: "B3", label: "B3 (2nd course - main)", freq: 246.9417 },
-      { key: "E4", label: "E4 (1st course - main)", freq: 329.6276 },
+      { key:"E2", label:"E2 (6th course - main)", freq:82.4069 },
+      { key:"A2", label:"A2 (5th course - main)", freq:110.0 },
+      { key:"D3", label:"D3 (4th course - main)", freq:146.8324 },
+      { key:"G3", label:"G3 (3rd course - main)", freq:196.0 },
+      { key:"B3", label:"B3 (2nd course - main)", freq:246.9417 },
+      { key:"E4", label:"E4 (1st course - main)", freq:329.6276 },
     ],
     gtr_12_partners: [
-      { key: "E3", label: "E3 (6th course - octave partner)", freq: 164.8138 },
-      { key: "A3", label: "A3 (5th course - octave partner)", freq: 220.0000 },
-      { key: "D4", label: "D4 (4th course - octave partner)", freq: 293.6648 },
-      { key: "G4", label: "G4 (3rd course - octave partner)", freq: 392.0000 },
-      { key: "B3", label: "B3 (2nd course - unison partner)", freq: 246.9417 },
-      { key: "E4", label: "E4 (1st course - unison partner)", freq: 329.6276 },
+      { key:"E3", label:"E3 (6th course - octave partner)", freq:164.8138 },
+      { key:"A3", label:"A3 (5th course - octave partner)", freq:220.0 },
+      { key:"D4", label:"D4 (4th course - octave partner)", freq:293.6648 },
+      { key:"G4", label:"G4 (3rd course - octave partner)", freq:392.0 },
+      { key:"B3", label:"B3 (2nd course - unison partner)", freq:246.9417 },
+      { key:"E4", label:"E4 (1st course - unison partner)", freq:329.6276 },
     ],
     bass_std: [
-      { key: "E1", label: "E1 (4th)", freq: 41.2034 },
-      { key: "A1", label: "A1 (3rd)", freq: 55.0000 },
-      { key: "D2", label: "D2 (2nd)", freq: 73.4162 },
-      { key: "G2", label: "G2 (1st)", freq: 98.0000 },
+      { key:"E1", label:"E1 (4th)", freq:41.2034 },
+      { key:"A1", label:"A1 (3rd)", freq:55.0 },
+      { key:"D2", label:"D2 (2nd)", freq:73.4162 },
+      { key:"G2", label:"G2 (1st)", freq:98.0 },
     ],
   };
 
-  // -------- Recommended defaults --------
-  const GATE_ON = true;
-  const RMS_GATE = 0.012;
+  function activePresetKey(){
+    const p = presetEl.value;
+    if (p==="gtr_12" && twelvePartnersEl.checked) return "gtr_12_partners";
+    return p;
+  }
+  function getActiveList(){ return PRESETS[activePresetKey()]; }
+  function getTargetByKey(key){ return getActiveList().find(x=>x.key===key) || null; }
+
+  function fillTargetOptions(){
+    const p = presetEl.value;
+    if (p==="gtr_12"){ twelveWrapEl.style.display="flex"; }
+    else { twelveWrapEl.style.display="none"; twelvePartnersEl.checked=false; }
+
+    targetEl.innerHTML="";
+    const autoOpt=document.createElement("option");
+    autoOpt.value=""; autoOpt.textContent="Auto (nearest note)";
+    targetEl.appendChild(autoOpt);
+
+    for (const s of getActiveList()){
+      const opt=document.createElement("option");
+      opt.value=s.key; opt.textContent=s.label;
+      targetEl.appendChild(opt);
+    }
+
+    if (p==="gtr_12" && !twelvePartnersEl.checked){
+      courseHintEl.textContent="12-string: tune MAIN strings first. Then enable partners to tune the octave/unison strings.";
+    } else if (p==="gtr_12" && twelvePartnersEl.checked){
+      courseHintEl.textContent="Partners mode: E/A/D/G are octave up. B & high E are unison.";
+    } else courseHintEl.textContent="";
+
+    clearLocks();
+  }
+
+  presetEl.addEventListener("change", fillTargetOptions);
+  twelvePartnersEl.addEventListener("change", fillTargetOptions);
+  targetEl.addEventListener("change", clearLocks);
+
+  // ----- tuning helpers -----
+  function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
+  function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
+  function midiToNoteName(m){
+    const names=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    const mi=Math.round(m);
+    const name=names[(mi%12+12)%12];
+    const oct=Math.floor(mi/12)-1;
+    return name+oct;
+  }
+  function centsOff(f,ref){ return 1200*Math.log2(f/ref); }
+
+  function nearestStringInPreset(freq){
+    const list=getActiveList();
+    let best=null, bestAbs=Infinity;
+    for (const s of list){
+      const c=Math.abs(centsOff(freq,s.freq));
+      if (c<bestAbs){ bestAbs=c; best=s; }
+    }
+    return best ? {...best, absCents:bestAbs} : null;
+  }
+
+  // ----- settings -----
   const SMOOTH_ON = true;
   const SMOOTH_WINDOW = 6;
   const IN_TUNE_CENTS = 5;
   const DISPLAY_CENTS_CLAMP = 50;
+  smoothPill.textContent = `Smoothing: ${SMOOTH_ON ? "ON" : "OFF"}`;
 
-  if (gatePill) gatePill.textContent = `Gate: ${GATE_ON ? "ON" : "OFF"}`;
-  if (smoothPill) smoothPill.textContent = `Smoothing: ${SMOOTH_ON ? "ON" : "OFF"}`;
+  // gate is adjustable
+  let gateThreshold = Number(gateSlider.value);
+  gatePill.textContent = `Gate: ${gateThreshold.toFixed(3)}`;
+  gateSlider.addEventListener("input", ()=>{
+    gateThreshold = Number(gateSlider.value);
+    gatePill.textContent = `Gate: ${gateThreshold.toFixed(3)}`;
+  });
 
-  // -------- Music helpers --------
-  function freqToMidi(f) { return 69 + 12 * Math.log2(f / 440); }
-  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
-  function midiToNoteName(m) {
-    const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-    const mi = Math.round(m);
-    const name = names[(mi % 12 + 12) % 12];
-    const oct = Math.floor(mi / 12) - 1;
-    return name + oct;
-  }
-  function centsOff(f, ref) { return 1200 * Math.log2(f / ref); }
-
-  function activePresetKey() {
-    const preset = presetEl?.value || "gtr_std";
-    if (preset === "gtr_12" && twelvePartnersEl?.checked) return "gtr_12_partners";
-    return preset;
-  }
-  function getActiveList() { return PRESETS[activePresetKey()]; }
-  function getTargetByKey(key) { return getActiveList().find(x => x.key === key) || null; }
-
-  function nearestStringInPreset(freq) {
-    const list = getActiveList();
-    let best = null, bestAbs = Infinity;
-    for (const s of list) {
-      const c = Math.abs(centsOff(freq, s.freq));
-      if (c < bestAbs) { bestAbs = c; best = s; }
-    }
-    return best ? { ...best, absCents: bestAbs } : null;
-  }
-
-  // -------- Locks (DECLARE BEFORE ANY CALLS) --------
+  // ----- locks -----
   let autoLockEnabled = true;
   let manualLockEnabled = false;
+  let lockedFreq=null, lockedLabel=null;
+  let candidateMidi=null, candidateCount=0;
+  const LOCK_FRAMES=8, RELOCK_CENTS=120;
+  let lastAutoFreq=null, lastAutoLabel=null;
 
-  let lockedFreq = null;
-  let lockedLabel = null;
-
-  let candidateMidi = null;
-  let candidateCount = 0;
-  const LOCK_FRAMES = 8;
-  const RELOCK_CENTS = 120;
-
-  let lastAutoFreq = null;
-  let lastAutoLabel = null;
-
-  function clearLocks() {
-    lockedFreq = null;
-    lockedLabel = null;
-    candidateMidi = null;
-    candidateCount = 0;
-    lastAutoFreq = null;
-    lastAutoLabel = null;
+  function clearLocks(){
+    lockedFreq=null; lockedLabel=null;
+    candidateMidi=null; candidateCount=0;
+    lastAutoFreq=null; lastAutoLabel=null;
   }
 
-  function updateLockUI() {
-    if (!lockPill || !autoLockBtn || !manualLockBtn) return;
-
-    if (manualLockEnabled) {
-      lockPill.textContent = `Mode: Manual lock (${lockedLabel || "—"})`;
+  function updateLockUI(){
+    if (manualLockEnabled){
+      lockPill.textContent = `Mode: Manual lock (${lockedLabel||"—"})`;
       autoLockBtn.textContent = "Auto-lock: OFF";
       manualLockBtn.textContent = "Manual lock: ON";
       return;
@@ -368,246 +399,181 @@
     manualLockBtn.textContent = "Manual lock: OFF";
   }
 
-  autoLockBtn?.addEventListener("click", () => {
-    manualLockEnabled = false;
-    autoLockEnabled = !autoLockEnabled;
+  autoLockBtn.addEventListener("click", ()=>{
+    manualLockEnabled=false;
+    autoLockEnabled=!autoLockEnabled;
     clearLocks();
     updateLockUI();
   });
 
-  manualLockBtn?.addEventListener("click", () => {
-    manualLockEnabled = !manualLockEnabled;
-    if (manualLockEnabled) {
-      autoLockEnabled = false;
-      if (lastAutoFreq != null && lastAutoLabel != null) {
-        lockedFreq = lastAutoFreq;
-        lockedLabel = lastAutoLabel;
+  manualLockBtn.addEventListener("click", ()=>{
+    manualLockEnabled=!manualLockEnabled;
+    if (manualLockEnabled){
+      autoLockEnabled=false;
+      if (lastAutoFreq!=null && lastAutoLabel!=null){
+        lockedFreq=lastAutoFreq; lockedLabel=lastAutoLabel;
       }
     } else {
-      autoLockEnabled = true;
+      autoLockEnabled=true;
       clearLocks();
     }
     updateLockUI();
   });
 
   updateLockUI();
-
-  // -------- Target/preset UI --------
-  function fillTargetOptions() {
-    const preset = presetEl?.value || "gtr_std";
-
-    if (twelveWrapEl && twelvePartnersEl) {
-      if (preset === "gtr_12") twelveWrapEl.style.display = "flex";
-      else { twelveWrapEl.style.display = "none"; twelvePartnersEl.checked = false; }
-    }
-
-    if (!targetEl) return;
-
-    const list = getActiveList();
-    targetEl.innerHTML = "";
-
-    const autoOpt = document.createElement("option");
-    autoOpt.value = "";
-    autoOpt.textContent = "Auto (nearest note)";
-    targetEl.appendChild(autoOpt);
-
-    for (const s of list) {
-      const opt = document.createElement("option");
-      opt.value = s.key;
-      opt.textContent = s.label;
-      targetEl.appendChild(opt);
-    }
-
-    if (courseHintEl) {
-      if (preset === "gtr_12" && !twelvePartnersEl?.checked) {
-        courseHintEl.textContent = "12-string: tune MAIN strings first. Then enable partners to tune the octave/unison strings.";
-      } else if (preset === "gtr_12" && twelvePartnersEl?.checked) {
-        courseHintEl.textContent = "Partners mode: E/A/D/G are octave up. B & high E are unison.";
-      } else {
-        courseHintEl.textContent = "";
-      }
-    }
-
-    clearLocks();
-  }
-
-  presetEl?.addEventListener("change", fillTargetOptions);
-  twelvePartnersEl?.addEventListener("change", fillTargetOptions);
-  targetEl?.addEventListener("change", clearLocks);
-
-  // Call after everything is initialized:
   fillTargetOptions();
 
-  // -------- Smoothing --------
-  const smoothBuf = [];
-  function smoothFreq(f) {
+  // ----- smoothing -----
+  const smoothBuf=[];
+  function smoothFreq(f){
     if (!SMOOTH_ON) return f;
     smoothBuf.push(f);
-    while (smoothBuf.length > SMOOTH_WINDOW) smoothBuf.shift();
-    return smoothBuf.reduce((a,b)=>a+b,0) / smoothBuf.length;
+    while (smoothBuf.length>SMOOTH_WINDOW) smoothBuf.shift();
+    return smoothBuf.reduce((a,b)=>a+b,0)/smoothBuf.length;
   }
-  function resetSmoothing() { smoothBuf.length = 0; }
+  function resetSmoothing(){ smoothBuf.length=0; }
 
-  // -------- Pitch detection (autocorrelation) --------
-  function autoCorrelate(timeDomainBuffer, sampleRate) {
-    // RMS gate
-    let rms = 0;
-    for (let i = 0; i < timeDomainBuffer.length; i++) {
-      const v = timeDomainBuffer[i];
-      rms += v * v;
-    }
-    rms = Math.sqrt(rms / timeDomainBuffer.length);
-    if (GATE_ON && rms < RMS_GATE) return null;
-
-    // remove DC
-    const b = timeDomainBuffer.slice();
-    let mean = 0;
-    for (let i = 0; i < b.length; i++) mean += b[i];
-    mean /= b.length;
-    for (let i = 0; i < b.length; i++) b[i] -= mean;
-
-    const size = b.length;
-    const maxLag = Math.floor(size / 2);
-
-    const minFreq = 35;
-    const maxFreq = 650;
-    const minLag = Math.floor(sampleRate / maxFreq);
-    const maxLag2 = Math.min(maxLag, Math.floor(sampleRate / minFreq));
-
-    let bestLag = -1;
-    let bestScore = 0;
-
-    for (let lag = minLag; lag <= maxLag2; lag++) {
-      let corr = 0;
-      for (let i = 0; i < size - lag; i++) corr += b[i] * b[i + lag];
-      corr = corr / (size - lag);
-
-      // small bias toward fundamentals
-      const bias = 1 + (lag / maxLag2) * 0.12;
-      const score = corr * bias;
-
-      if (score > bestScore) { bestScore = score; bestLag = lag; }
-    }
-
-    if (bestLag === -1 || bestScore < 0.1) return null;
-
-    // parabola interpolation
-    const c0 = corrAt(b, bestLag - 1);
-    const c1 = corrAt(b, bestLag);
-    const c2 = corrAt(b, bestLag + 1);
-    const denom = (2 * c1 - c0 - c2);
-    const shift = denom ? (c0 - c2) / (2 * denom) : 0;
-
-    const lagEst = bestLag + shift;
-    let freq = sampleRate / lagEst;
-
-    // harmonic correction (snap to half if that matches preset better)
-    const near = nearestStringInPreset(freq);
-    if (near && near.absCents > 25) {
-      const half = freq / 2;
-      const nearHalf = nearestStringInPreset(half);
-      if (nearHalf && nearHalf.absCents < 18 && nearHalf.absCents < near.absCents) {
-        freq = half;
-      }
-    }
-
-    return freq;
-
-    function corrAt(buf, lag) {
-      if (lag < 1) return 0;
-      let sum = 0;
-      for (let i = 0; i < buf.length - lag; i++) sum += buf[i] * buf[i + lag];
-      return sum / (buf.length - lag);
-    }
-  }
-
-  // -------- Strobe drawing --------
-  let strobeOffset = 0;
-
-  function drawStrobe(cents) {
-    if (!ctx) return;
-
-    const w = canvas.width, h = canvas.height;
+  // ----- strobe -----
+  let strobeOffset=0;
+  function drawStrobe(cents){
+    const w=canvas.width, h=canvas.height;
     ctx.clearRect(0,0,w,h);
+    ctx.fillStyle="#07080d"; ctx.fillRect(0,0,w,h);
 
-    // background
-    ctx.fillStyle = "#07080d";
-    ctx.fillRect(0,0,w,h);
+    const centerX=w/2;
+    const greenWidth=(IN_TUNE_CENTS/DISPLAY_CENTS_CLAMP)*(w*0.60);
+    ctx.fillStyle="rgba(6,214,160,0.12)";
+    ctx.fillRect(centerX-greenWidth/2,0,greenWidth,h);
 
-    // subtle in-tune band
-    const centerX = w / 2;
-    const greenWidth = (IN_TUNE_CENTS / DISPLAY_CENTS_CLAMP) * (w * 0.60);
-    ctx.fillStyle = "rgba(6,214,160,0.12)";
-    ctx.fillRect(centerX - greenWidth/2, 0, greenWidth, h);
+    const c=Math.max(-DISPLAY_CENTS_CLAMP, Math.min(DISPLAY_CENTS_CLAMP, cents||0));
+    const abs=Math.abs(c);
 
-    const c = Math.max(-DISPLAY_CENTS_CLAMP, Math.min(DISPLAY_CENTS_CLAMP, cents || 0));
-    const abs = Math.abs(c);
-
-    const stripeW = 28;
-    const gapW = 18;
-    const period = stripeW + gapW;
-
-    const maxSpeed = 20;
-    let speed = (abs / DISPLAY_CENTS_CLAMP) * maxSpeed;
-    speed *= (c < 0 ? -1 : 1);
-    if (abs <= IN_TUNE_CENTS) speed = 0;
+    const stripeW=28, gapW=18, period=stripeW+gapW;
+    const maxSpeed=20;
+    let speed=(abs/DISPLAY_CENTS_CLAMP)*maxSpeed;
+    speed *= (c<0?-1:1);
+    if (abs<=IN_TUNE_CENTS) speed=0;
 
     strobeOffset += speed;
-    if (strobeOffset > period) strobeOffset -= period;
-    if (strobeOffset < -period) strobeOffset += period;
+    if (strobeOffset>period) strobeOffset-=period;
+    if (strobeOffset<-period) strobeOffset+=period;
 
-    const bands = 3;
-    const bandH = h / bands;
+    const bands=3, bandH=h/bands;
+    for (let b=0;b<bands;b++){
+      const y0=b*bandH;
+      const localOffset=strobeOffset*(b%2===0?1:0.86);
+      const intensity=Math.max(0.25, 1-(abs/DISPLAY_CENTS_CLAMP));
+      ctx.fillStyle=`rgba(255,190,11,${0.35+intensity*0.35})`;
 
-    for (let b = 0; b < bands; b++) {
-      const y0 = b * bandH;
-      const localOffset = strobeOffset * (b % 2 === 0 ? 1 : 0.86);
-
-      const intensity = Math.max(0.25, 1 - (abs / DISPLAY_CENTS_CLAMP));
-      ctx.fillStyle = `rgba(255,190,11,${0.35 + intensity*0.35})`;
-
-      for (let x = -period*2; x < w + period*2; x += period) {
-        const xPos = x + localOffset;
+      for (let x=-period*2; x<w+period*2; x+=period){
+        const xPos=x+localOffset;
         ctx.save();
-        ctx.translate(xPos, y0);
-        ctx.transform(1, 0.18, 0, 1, 0, 0);
-        ctx.fillRect(0, 0, stripeW, bandH);
+        ctx.translate(xPos,y0);
+        ctx.transform(1,0.18,0,1,0,0);
+        ctx.fillRect(0,0,stripeW,bandH);
         ctx.restore();
       }
-
-      if (b < bands - 1) {
-        ctx.strokeStyle = "rgba(255,255,255,.08)";
-        ctx.beginPath();
-        ctx.moveTo(0, y0 + bandH);
-        ctx.lineTo(w, y0 + bandH);
-        ctx.stroke();
+      if (b<bands-1){
+        ctx.strokeStyle="rgba(255,255,255,.08)";
+        ctx.beginPath(); ctx.moveTo(0,y0+bandH); ctx.lineTo(w,y0+bandH); ctx.stroke();
       }
     }
   }
 
-  function setStatus(cents) {
-    const abs = Math.abs(cents);
-    if (!statusEl) return;
-    if (abs <= IN_TUNE_CENTS) {
+  function setStatus(cents){
+    const abs=Math.abs(cents);
+    if (abs<=IN_TUNE_CENTS){
       statusEl.innerHTML = `<span class="statusOk">In tune</span> (±${IN_TUNE_CENTS}¢)`;
-    } else if (abs <= 15) {
-      statusEl.innerHTML = (cents < 0)
+    } else if (abs<=15){
+      statusEl.innerHTML = cents<0
         ? `<span class="statusWarn">Flat</span> — tighten up`
         : `<span class="statusWarn">Sharp</span> — loosen a bit`;
     } else {
-      statusEl.innerHTML = (cents < 0)
+      statusEl.innerHTML = cents<0
         ? `<span class="statusBad">Very flat</span> — tighten more`
         : `<span class="statusBad">Very sharp</span> — loosen more`;
     }
   }
 
-  function render(freq) {
-    if (!freq) {
-      noteEl.textContent = "—";
-      freqEl.textContent = "— Hz";
-      centsEl.textContent = "—";
-      if (statusEl) statusEl.textContent = "Play a string";
-      if (nearestStringHintEl) nearestStringHintEl.textContent = "";
+  // ----- pitch detect (autocorrelation + gate + harmonic help) -----
+  function autoCorrelate(timeDomainBuffer, sampleRate){
+    // RMS
+    let rms=0;
+    for (let i=0;i<timeDomainBuffer.length;i++){
+      const v=timeDomainBuffer[i];
+      rms += v*v;
+    }
+    rms = Math.sqrt(rms/timeDomainBuffer.length);
+
+    // update input level UI
+    const pct = Math.min(100, Math.max(0, (rms/0.06)*100)); // 0.06 ~ loud
+    lvlFill.style.width = pct.toFixed(1)+"%";
+    lvlText.textContent = "RMS: " + rms.toFixed(4);
+
+    // gate
+    if (rms < gateThreshold) return null;
+
+    // remove DC
+    const b=timeDomainBuffer.slice();
+    let mean=0;
+    for (let i=0;i<b.length;i++) mean += b[i];
+    mean/=b.length;
+    for (let i=0;i<b.length;i++) b[i]-=mean;
+
+    const size=b.length;
+    const maxLag=Math.floor(size/2);
+
+    const minFreq=35, maxFreq=650;
+    const minLag=Math.floor(sampleRate/maxFreq);
+    const maxLag2=Math.min(maxLag, Math.floor(sampleRate/minFreq));
+
+    let bestLag=-1, bestScore=0;
+
+    for (let lag=minLag; lag<=maxLag2; lag++){
+      let corr=0;
+      for (let i=0;i<size-lag;i++) corr += b[i]*b[i+lag];
+      corr = corr/(size-lag);
+
+      // slight bias toward fundamentals (lower pitch)
+      const bias = 1 + (lag/maxLag2)*0.12;
+      const score = corr*bias;
+      if (score>bestScore){ bestScore=score; bestLag=lag; }
+    }
+
+    if (bestLag===-1 || bestScore<0.1) return null;
+
+    // parabola interpolation
+    const c0=corrAt(b,bestLag-1), c1=corrAt(b,bestLag), c2=corrAt(b,bestLag+1);
+    const denom=(2*c1-c0-c2);
+    const shift = denom ? (c0-c2)/(2*denom) : 0;
+    const lagEst = bestLag + shift;
+
+    let freq = sampleRate/lagEst;
+
+    // harmonic correction: if half matches preset better, snap to half
+    const near = nearestStringInPreset(freq);
+    if (near && near.absCents>25){
+      const half=freq/2;
+      const nearHalf=nearestStringInPreset(half);
+      if (nearHalf && nearHalf.absCents<18 && nearHalf.absCents<near.absCents) freq=half;
+    }
+    return freq;
+
+    function corrAt(buf, lag){
+      if (lag<1) return 0;
+      let sum=0;
+      for (let i=0;i<buf.length-lag;i++) sum += buf[i]*buf[i+lag];
+      return sum/(buf.length-lag);
+    }
+  }
+
+  function render(freq){
+    if (!freq){
+      noteEl.textContent="—";
+      freqEl.textContent="— Hz";
+      centsEl.textContent="—";
+      statusEl.textContent="Play a string";
+      nearestStringHintEl.textContent="";
       drawStrobe(0);
       return;
     }
@@ -615,16 +581,14 @@
     const f = smoothFreq(freq);
 
     const nearPreset = nearestStringInPreset(f);
-    if (nearestStringHintEl) {
-      nearestStringHintEl.textContent = nearPreset
-        ? `Nearest preset string: ${nearPreset.key} (${Math.round(nearPreset.absCents)}¢ away)`
-        : "";
-    }
+    nearestStringHintEl.textContent = nearPreset
+      ? `Nearest preset string: ${nearPreset.key} (${Math.round(nearPreset.absCents)}¢ away)`
+      : "";
 
-    const targetKey = targetEl?.value || "";
+    const targetKey = targetEl.value;
     let refFreq, refLabel;
 
-    if (targetKey) {
+    if (targetKey){
       const t = getTargetByKey(targetKey);
       refFreq = t ? t.freq : null;
       refLabel = targetKey;
@@ -632,58 +596,35 @@
     } else {
       const midi = freqToMidi(f);
       const nearestMidi = Math.round(midi);
-      const nearestFreq = midiToFreq(nearestMidi);
-      const nearestLabel = midiToNoteName(nearestMidi);
+      const nf = midiToFreq(nearestMidi);
+      const nl = midiToNoteName(nearestMidi);
+      lastAutoFreq = nf; lastAutoLabel = nl;
 
-      lastAutoFreq = nearestFreq;
-      lastAutoLabel = nearestLabel;
-
-      if (manualLockEnabled) {
-        if (lockedFreq != null && lockedLabel != null) {
-          refFreq = lockedFreq;
-          refLabel = lockedLabel;
-
-          const away = Math.abs(centsOff(f, lockedFreq));
-          if (away > RELOCK_CENTS) {
-            lockedFreq = nearestFreq;
-            lockedLabel = nearestLabel;
-            refFreq = lockedFreq;
-            refLabel = lockedLabel;
+      if (manualLockEnabled){
+        if (lockedFreq!=null && lockedLabel!=null){
+          refFreq=lockedFreq; refLabel=lockedLabel;
+          const away=Math.abs(centsOff(f,lockedFreq));
+          if (away>RELOCK_CENTS){
+            lockedFreq=nf; lockedLabel=nl;
+            refFreq=lockedFreq; refLabel=lockedLabel;
           }
+        } else { refFreq=nf; refLabel=nl; }
+      } else if (autoLockEnabled){
+        if (lockedFreq==null){
+          if (candidateMidi===nearestMidi) candidateCount++;
+          else { candidateMidi=nearestMidi; candidateCount=1; }
+          if (candidateCount>=LOCK_FRAMES){ lockedFreq=nf; lockedLabel=nl; }
+          refFreq=nf; refLabel=nl;
         } else {
-          refFreq = nearestFreq;
-          refLabel = nearestLabel;
+          const away=Math.abs(centsOff(f,lockedFreq));
+          if (away>RELOCK_CENTS){ clearLocks(); refFreq=nf; refLabel=nl; }
+          else { refFreq=lockedFreq; refLabel=lockedLabel; }
         }
-      } else if (autoLockEnabled) {
-        if (lockedFreq == null) {
-          if (candidateMidi === nearestMidi) candidateCount++;
-          else { candidateMidi = nearestMidi; candidateCount = 1; }
-
-          if (candidateCount >= LOCK_FRAMES) {
-            lockedFreq = nearestFreq;
-            lockedLabel = nearestLabel;
-          }
-          refFreq = nearestFreq;
-          refLabel = nearestLabel;
-        } else {
-          const away = Math.abs(centsOff(f, lockedFreq));
-          if (away > RELOCK_CENTS) {
-            clearLocks();
-            refFreq = nearestFreq;
-            refLabel = nearestLabel;
-          } else {
-            refFreq = lockedFreq;
-            refLabel = lockedLabel;
-          }
-        }
-      } else {
-        refFreq = nearestFreq;
-        refLabel = nearestLabel;
-      }
+      } else { refFreq=nf; refLabel=nl; }
     }
 
-    if (!refFreq) {
-      if (statusEl) statusEl.textContent = "Select a target";
+    if (!refFreq){
+      statusEl.textContent="Select a target";
       drawStrobe(0);
       return;
     }
@@ -693,31 +634,30 @@
 
     noteEl.textContent = refLabel;
     freqEl.textContent = f.toFixed(2) + " Hz";
-    centsEl.textContent = (centsRounded > 0 ? "+" : "") + centsRounded + "¢";
+    centsEl.textContent = (centsRounded>0?"+":"") + centsRounded + "¢";
     setStatus(cents);
     drawStrobe(cents);
     updateLockUI();
   }
 
-  // -------- Audio plumbing --------
+  // ----- audio loop -----
   let audioCtx, analyser, buf, rafId, stream;
   const FFT_SIZE = 2048;
 
-  async function start() {
-    if (errBox) errBox.style.display = "none";
-    startBtn.disabled = true;
-    startBtn.textContent = "Starting…";
+  async function start(){
+    errBox.style.display="none";
+    startBtn.disabled=true;
+    startBtn.textContent="Starting…";
 
-    try {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("getUserMedia not available. Use Chrome and HTTPS.");
-      }
-
+    try{
       stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+        audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
       });
 
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      // IMPORTANT for Android: ensure context is actually running
+      if (audioCtx.state !== "running") await audioCtx.resume();
+
       const src = audioCtx.createMediaStreamSource(stream);
 
       analyser = audioCtx.createAnalyser();
@@ -732,39 +672,37 @@
         const f = autoCorrelate(buf, audioCtx.sampleRate);
         const freq = (f && f >= 35 && f <= 650) ? f : null;
 
-        if (!freq) { resetSmoothing(); render(null); }
+        if (!freq){ resetSmoothing(); render(null); }
         else render(freq);
 
         rafId = requestAnimationFrame(loop);
       };
 
       loop();
-      startBtn.textContent = "Mic running";
-    } catch (e) {
-      startBtn.disabled = false;
-      startBtn.textContent = "Start microphone";
-      showErr("Mic start failed:\n" + (e?.message || String(e)) + "\n\nOn Android: Chrome → Settings → Site settings → Microphone → Allow");
+      startBtn.textContent="Mic running";
+    } catch(e){
+      startBtn.disabled=false;
+      startBtn.textContent="Start microphone";
+      showErr("Mic start failed:\n" + (e?.message || String(e)));
     }
   }
 
-  startBtn?.addEventListener('click', start);
+  startBtn.addEventListener("click", start);
 
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
+  document.addEventListener("visibilitychange", ()=>{
+    if (document.hidden){
       if (rafId) cancelAnimationFrame(rafId);
-      if (stream) stream.getTracks().forEach(t => t.stop());
+      if (stream) stream.getTracks().forEach(t=>t.stop());
       if (audioCtx) audioCtx.close();
 
-      startBtn.disabled = false;
-      startBtn.textContent = "Start microphone";
-
+      startBtn.disabled=false;
+      startBtn.textContent="Start microphone";
       clearLocks();
       resetSmoothing();
       render(null);
     }
   });
 
-  // Initial draw
   drawStrobe(0);
 })();
 </script>
