@@ -72,6 +72,7 @@
       border-radius:14px;
       background:var(--panel);
       border:1px solid var(--border);
+      position: relative;
     }
     canvas{
       width:100%;
@@ -82,8 +83,9 @@
       background:#07080d;
     }
     .centerLine{
-      position: relative;
-      margin-top:-120px;
+      position: absolute;
+      left: 12px; right: 12px;
+      top: 36px; /* aligns with canvas top inside wrap */
       height:120px;
       pointer-events:none;
     }
@@ -139,7 +141,7 @@
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Tap <b>Start microphone</b>. If you see “Mic running” but no notes, check the <b>Input Level</b> bar and lower the gate.</p>
+    <p>Tap <b>Start microphone</b>. If notes update but the strobe doesn’t move, this build fixes that by animating the strobe independently.</p>
 
     <button id="startBtn">Start microphone</button>
 
@@ -182,7 +184,7 @@
         <div style="margin-top:12px;">
           <div class="small">Noise Gate (lower = more sensitive)</div>
           <input id="gateSlider" type="range" min="0.001" max="0.03" step="0.001" value="0.006" />
-          <div class="small muted">Tip: if nothing happens, slide this down to 0.003 or 0.002.</div>
+          <div class="small muted">Tip: if notes flicker, try 0.004–0.008. If nothing happens, try 0.002–0.003.</div>
         </div>
       </div>
     </div>
@@ -218,7 +220,7 @@
     </div>
 
     <p class="small" style="margin-top:14px;">
-      If the input level bar moves but notes don’t: lower the gate a bit, pluck near the bridge, and mute other strings.
+      12-string tip: pluck one string in the course and mute its partner with a fingertip while tuning.
     </p>
   </div>
 
@@ -227,8 +229,8 @@
   // ----- error UI -----
   const errBox = document.getElementById("errBox");
   function showErr(msg){ errBox.style.display="block"; errBox.textContent=msg; }
-  window.addEventListener("error", (e)=> showErr("JavaScript error:\n"+(e.message||e.type)+"\n"+(e.filename||"")+":"+ (e.lineno||"")));
-  window.addEventListener("unhandledrejection",(e)=> showErr("Unhandled rejection:\n"+(e.reason?.message||String(e.reason))));
+  window.addEventListener("error",(e)=>showErr("JavaScript error:\n"+(e.message||e.type)+"\n"+(e.filename||"")+":"+ (e.lineno||"")));
+  window.addEventListener("unhandledrejection",(e)=>showErr("Unhandled rejection:\n"+(e.reason?.message||String(e.reason))));
 
   // ----- UI -----
   const startBtn = document.getElementById("startBtn");
@@ -309,7 +311,7 @@
 
   function fillTargetOptions(){
     const p = presetEl.value;
-    if (p==="gtr_12"){ twelveWrapEl.style.display="flex"; }
+    if (p==="gtr_12") twelveWrapEl.style.display="flex";
     else { twelveWrapEl.style.display="none"; twelvePartnersEl.checked=false; }
 
     targetEl.innerHTML="";
@@ -336,7 +338,7 @@
   twelvePartnersEl.addEventListener("change", fillTargetOptions);
   targetEl.addEventListener("change", clearLocks);
 
-  // ----- tuning helpers -----
+  // ----- helpers -----
   function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
   function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
   function midiToNoteName(m){
@@ -365,7 +367,7 @@
   const DISPLAY_CENTS_CLAMP = 50;
   smoothPill.textContent = `Smoothing: ${SMOOTH_ON ? "ON" : "OFF"}`;
 
-  // gate is adjustable
+  // Gate adjustable
   let gateThreshold = Number(gateSlider.value);
   gatePill.textContent = `Gate: ${gateThreshold.toFixed(3)}`;
   gateSlider.addEventListener("input", ()=>{
@@ -433,9 +435,16 @@
   }
   function resetSmoothing(){ smoothBuf.length=0; }
 
-  // ----- strobe -----
-  let strobeOffset=0;
+  // ----- strobe (independent animation) -----
+  let strobeOffset = 0;
+  let lastCentsForStrobe = 0;  // drives animation
+  let lastSignalTs = 0;        // when we last had a valid pitch
+  const SIGNAL_HOLD_MS = 600;  // keep strobe moving briefly even if detection flickers
+
   function drawStrobe(cents){
+    // guard against NaN / Infinity
+    if (!Number.isFinite(cents)) cents = 0;
+
     const w=canvas.width, h=canvas.height;
     ctx.clearRect(0,0,w,h);
     ctx.fillStyle="#07080d"; ctx.fillRect(0,0,w,h);
@@ -445,14 +454,16 @@
     ctx.fillStyle="rgba(6,214,160,0.12)";
     ctx.fillRect(centerX-greenWidth/2,0,greenWidth,h);
 
-    const c=Math.max(-DISPLAY_CENTS_CLAMP, Math.min(DISPLAY_CENTS_CLAMP, cents||0));
+    const c=Math.max(-DISPLAY_CENTS_CLAMP, Math.min(DISPLAY_CENTS_CLAMP, cents));
     const abs=Math.abs(c);
 
     const stripeW=28, gapW=18, period=stripeW+gapW;
     const maxSpeed=20;
+
     let speed=(abs/DISPLAY_CENTS_CLAMP)*maxSpeed;
     speed *= (c<0?-1:1);
     if (abs<=IN_TUNE_CENTS) speed=0;
+    if (!Number.isFinite(speed)) speed = 0;
 
     strobeOffset += speed;
     if (strobeOffset>period) strobeOffset-=period;
@@ -480,6 +491,18 @@
     }
   }
 
+  function strobeAnimationLoop(){
+    // If signal recently present, animate with last cents; otherwise slowly settle to 0
+    const now = performance.now();
+    if (now - lastSignalTs > SIGNAL_HOLD_MS) {
+      lastCentsForStrobe *= 0.90;
+      if (Math.abs(lastCentsForStrobe) < 0.2) lastCentsForStrobe = 0;
+    }
+    drawStrobe(lastCentsForStrobe);
+    requestAnimationFrame(strobeAnimationLoop);
+  }
+  requestAnimationFrame(strobeAnimationLoop);
+
   function setStatus(cents){
     const abs=Math.abs(cents);
     if (abs<=IN_TUNE_CENTS){
@@ -505,8 +528,8 @@
     }
     rms = Math.sqrt(rms/timeDomainBuffer.length);
 
-    // update input level UI
-    const pct = Math.min(100, Math.max(0, (rms/0.06)*100)); // 0.06 ~ loud
+    // input level UI
+    const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
     lvlFill.style.width = pct.toFixed(1)+"%";
     lvlText.textContent = "RMS: " + rms.toFixed(4);
 
@@ -534,7 +557,6 @@
       for (let i=0;i<size-lag;i++) corr += b[i]*b[i+lag];
       corr = corr/(size-lag);
 
-      // slight bias toward fundamentals (lower pitch)
       const bias = 1 + (lag/maxLag2)*0.12;
       const score = corr*bias;
       if (score>bestScore){ bestScore=score; bestLag=lag; }
@@ -550,7 +572,7 @@
 
     let freq = sampleRate/lagEst;
 
-    // harmonic correction: if half matches preset better, snap to half
+    // harmonic correction
     const near = nearestStringInPreset(freq);
     if (near && near.absCents>25){
       const half=freq/2;
@@ -574,7 +596,6 @@
       centsEl.textContent="—";
       statusEl.textContent="Play a string";
       nearestStringHintEl.textContent="";
-      drawStrobe(0);
       return;
     }
 
@@ -625,7 +646,6 @@
 
     if (!refFreq){
       statusEl.textContent="Select a target";
-      drawStrobe(0);
       return;
     }
 
@@ -636,8 +656,13 @@
     freqEl.textContent = f.toFixed(2) + " Hz";
     centsEl.textContent = (centsRounded>0?"+":"") + centsRounded + "¢";
     setStatus(cents);
-    drawStrobe(cents);
     updateLockUI();
+
+    // Drive the independent strobe loop:
+    if (Number.isFinite(cents)) {
+      lastCentsForStrobe = cents;
+      lastSignalTs = performance.now();
+    }
   }
 
   // ----- audio loop -----
@@ -655,7 +680,6 @@
       });
 
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      // IMPORTANT for Android: ensure context is actually running
       if (audioCtx.state !== "running") await audioCtx.resume();
 
       const src = audioCtx.createMediaStreamSource(stream);
@@ -699,11 +723,13 @@
       startBtn.textContent="Start microphone";
       clearLocks();
       resetSmoothing();
+
+      lastCentsForStrobe = 0;
+      lastSignalTs = 0;
       render(null);
     }
   });
 
-  drawStrobe(0);
 })();
 </script>
 </body>
