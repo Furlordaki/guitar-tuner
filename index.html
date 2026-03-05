@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Guitar Tuner</title>
+  <title>Strobe Guitar Tuner</title>
   <style>
     body{margin:0;padding:16px;font-family:system-ui,Arial;background:#0b0c10;color:#e8e8e8}
     .card{max-width:740px;margin:0 auto;background:#14161c;border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
@@ -24,7 +24,7 @@
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Open with cache-buster if needed: <span class="muted">?v=123</span></p>
+    <p>Tip: open with cache-buster if needed: <span class="muted">?v=123</span></p>
 
     <button id="startBtn">Start microphone</button>
 
@@ -41,14 +41,16 @@
           <div class="muted">Input level</div>
           <div class="meter"><div class="fill" id="lvl"></div></div>
           <div class="muted" id="rms">RMS: —</div>
-          <div class="muted" id="stdbg">Strobe: —</div>
+          <div class="muted" id="dbg">Strobe: —</div>
         </div>
       </div>
 
       <div class="box">
         <div class="muted">Strobe</div>
         <canvas id="strobe" width="900" height="240"></canvas>
-        <div class="muted" style="margin-top:8px">If you’re sharp, the pattern should drift one way; if flat, the other.</div>
+        <div class="muted" style="margin-top:8px">
+          Flat moves one way, sharp the other. Small offsets should still drift slowly.
+        </div>
       </div>
     </div>
   </div>
@@ -71,12 +73,12 @@
   const centsEl = document.getElementById('cents');
   const lvlFill = document.getElementById('lvl');
   const rmsEl = document.getElementById('rms');
-  const stdbg = document.getElementById('stdbg');
+  const dbgEl = document.getElementById('dbg');
 
   const canvas = document.getElementById('strobe');
   const ctx = canvas.getContext('2d');
 
-  // ----- note helpers -----
+  // -------- Note helpers --------
   const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
   function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
@@ -94,8 +96,9 @@
     return Math.sqrt(s/buf.length);
   }
 
-  // ----- simple autocorrelation -----
-  function autoCorrelate(buf, sampleRate){
+  // -------- Autocorrelation with parabolic peak interpolation --------
+  // This is the key fix: fractional lag => cents stops being stuck at 0.
+  function autoCorrelateParabolic(buf, sampleRate){
     const SIZE = buf.length;
 
     const rms = rmsOf(buf);
@@ -103,7 +106,7 @@
     lvlFill.style.width = pct.toFixed(1) + '%';
     rmsEl.textContent = 'RMS: ' + rms.toFixed(4);
 
-    // gate
+    // gate (phone-friendly)
     if (rms < 0.004) return null;
 
     // remove DC
@@ -117,20 +120,57 @@
     const minLag = Math.floor(sampleRate/maxFreq);
     const maxLag = Math.min(Math.floor(sampleRate/minFreq), Math.floor(SIZE/2));
 
-    let bestLag=-1, best=0;
+    let bestLag=-1;
+    let bestScore=0;
 
+    // crude correlation scan
     for(let lag=minLag; lag<=maxLag; lag++){
       let sum=0;
-      for(let i=0;i<SIZE-lag;i++) sum += b[i]*b[i+lag];
+      for(let i=0;i<SIZE-lag;i++){
+        sum += b[i]*b[i+lag];
+      }
       const score = sum/(SIZE-lag);
-      if(score>best){ best=score; bestLag=lag; }
+      if(score > bestScore){
+        bestScore = score;
+        bestLag = lag;
+      }
     }
 
-    if(bestLag===-1 || best<0.1) return null;
-    return sampleRate / bestLag;
+    if(bestLag === -1 || bestScore < 0.10) return null;
+
+    // Parabolic interpolation around bestLag using correlation values at lag-1, lag, lag+1
+    // We compute corr at those lags once more (cheap enough).
+    function corrAt(lag){
+      let sum=0;
+      for(let i=0;i<SIZE-lag;i++) sum += b[i]*b[i+lag];
+      return sum/(SIZE-lag);
+    }
+
+    const lag0 = Math.max(minLag, bestLag-1);
+    const lag1 = bestLag;
+    const lag2 = Math.min(maxLag, bestLag+1);
+
+    if (lag0 === lag1 || lag2 === lag1) {
+      return sampleRate / bestLag;
+    }
+
+    const y0 = corrAt(lag0);
+    const y1 = corrAt(lag1);
+    const y2 = corrAt(lag2);
+
+    // Vertex of parabola through (x0,y0),(x1,y1),(x2,y2) where x are lags
+    // For equally spaced points, shift = 0.5*(y0 - y2)/(y0 - 2*y1 + y2)
+    const denom = (y0 - 2*y1 + y2);
+    const shift = denom ? (0.5 * (y0 - y2) / denom) : 0;
+
+    const refinedLag = lag1 + shift;
+
+    if (!Number.isFinite(refinedLag) || refinedLag <= 0) return sampleRate / bestLag;
+
+    return sampleRate / refinedLag;
   }
 
-  // ----- STROBE: always animates, high contrast -----
+  // -------- Strobe --------
   let strobeOffset = 0;
   let lastCents = 0;
 
@@ -140,28 +180,25 @@
     const w = canvas.width, h = canvas.height;
     ctx.clearRect(0,0,w,h);
 
-    // background
     ctx.fillStyle = '#07080d';
     ctx.fillRect(0,0,w,h);
 
-    // center band (in-tune zone)
+    // in-tune band + center line
     const clamp = 50;
-    const inTune = 2; // tighter zone
+    const inTune = 2;
     const greenWidth = (inTune/clamp) * (w*0.70);
     ctx.fillStyle = 'rgba(6,214,160,0.14)';
     ctx.fillRect(w/2 - greenWidth/2, 0, greenWidth, h);
 
-    // center line
     ctx.fillStyle='rgba(255,255,255,.80)';
     ctx.fillRect(w/2-1,0,2,h);
 
-    // movement speed (never hard-freezes)
     const c = Math.max(-clamp, Math.min(clamp, cents));
     const abs = Math.abs(c);
 
-    // Map cents -> speed; give it a minimum motion so it's visible
+    // Always some motion when abs > tiny threshold
     const maxSpeed = 26;
-    const minSpeed = 1.2; // <-- key change: still moves for small cents
+    const minSpeed = 1.2;
     let speed = (abs/clamp) * maxSpeed;
     if (abs > 0.25) speed = Math.max(minSpeed, speed);
     else speed = 0;
@@ -174,10 +211,8 @@
     const gapW = 14;
     const period = stripeW + gapW;
 
-    // keep offset bounded
     strobeOffset = ((strobeOffset % period) + period) % period;
 
-    // draw diagonal stripes (more visible than vertical)
     const alpha = 0.35 + Math.max(0.2, 1-(abs/clamp))*0.45;
     ctx.fillStyle = `rgba(255,190,11,${alpha})`;
 
@@ -185,12 +220,12 @@
       const xp = x + strobeOffset;
       ctx.save();
       ctx.translate(xp,0);
-      ctx.transform(1,0.22,0,1,0,0); // diagonal
+      ctx.transform(1,0.22,0,1,0,0);
       ctx.fillRect(0,0,stripeW,h);
       ctx.restore();
     }
 
-    stdbg.textContent = `Strobe: cents=${c.toFixed(1)} speed=${speed.toFixed(2)}`;
+    dbgEl.textContent = `Strobe: cents=${c.toFixed(2)} speed=${speed.toFixed(2)} lagOffset=${strobeOffset.toFixed(1)}`;
   }
 
   function strobeLoop(){
@@ -199,7 +234,7 @@
   }
   requestAnimationFrame(strobeLoop);
 
-  // ----- audio -----
+  // -------- Audio --------
   let audioCtx, analyser, buf, rafId, stream;
 
   async function start(){
@@ -225,7 +260,8 @@
 
       const loop = () => {
         analyser.getFloatTimeDomainData(buf);
-        const f = autoCorrelate(buf, audioCtx.sampleRate);
+
+        const f = autoCorrelateParabolic(buf, audioCtx.sampleRate);
 
         if(!f){
           noteEl.textContent='—';
@@ -243,8 +279,7 @@
         noteEl.textContent = midiToName(m);
         freqEl.textContent = f.toFixed(2) + ' Hz';
 
-        const c = Math.round(cents);
-        centsEl.textContent = (c>0?'+':'') + c + ' cents';
+        centsEl.textContent = (cents>=0?'+':'') + cents.toFixed(1) + ' cents';
 
         lastCents = cents;
 
