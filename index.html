@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Strobe Guitar Tuner (Phone)</title>
+  <title>Strobe Guitar Tuner</title>
   <style>
     :root{
       --bg:#0b0c10;
@@ -25,7 +25,7 @@
       background:var(--bg); color:var(--text);
     }
     .card{
-      max-width:680px; margin:0 auto;
+      max-width:720px; margin:0 auto;
       padding:16px; border-radius:16px;
       background:var(--card);
       box-shadow: 0 10px 28px rgba(0,0,0,.35);
@@ -85,7 +85,7 @@
       border-radius:12px;
       border:1px solid rgba(255,255,255,.10);
       display:block;
-      background:#090a0f;
+      background:#07080d;
     }
     .centerLine{
       position: relative;
@@ -101,8 +101,8 @@
       transform: translateX(-1px);
       width:2px;
       height:120px;
-      background: rgba(255,255,255,.55);
-      box-shadow: 0 0 12px rgba(255,255,255,.15);
+      background: rgba(255,255,255,.75);
+      box-shadow: 0 0 16px rgba(255,255,255,.20);
     }
     .legend{
       display:flex;
@@ -117,12 +117,25 @@
     label{ user-select:none; }
     .togRow{ display:flex; gap:10px; align-items:center; margin-top:10px; }
     .hint{ margin-top:8px; font-size:13px; color:var(--muted); }
+
+    .err{
+      margin-top:12px;
+      padding:10px 12px;
+      border-radius:12px;
+      background: rgba(255,0,110,.10);
+      border:1px solid rgba(255,0,110,.35);
+      color: rgba(255,255,255,.92);
+      display:none;
+      white-space: pre-wrap;
+      font-size: 12.5px;
+      line-height: 1.35;
+    }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Tap <b>Start microphone</b>. Pick one string. Use <b>Manual lock</b> when you’re on the right note to stop jumping (great for 12-strings).</p>
+    <p>Tap <b>Start microphone</b>. Use <b>Manual lock</b> once the note is correct (especially on 12-string).</p>
 
     <button id="startBtn">Start microphone</button>
 
@@ -134,11 +147,14 @@
         <button id="manualLockBtn" class="btn2">Manual lock: OFF</button>
       </div>
     </div>
+
     <div style="margin-top:8px;">
       <span class="pill" id="lockPill">Mode: Auto-lock</span>
       <span class="pill" id="gatePill" style="margin-left:8px;">Gate: ON</span>
       <span class="pill" id="smoothPill" style="margin-left:8px;">Smoothing: ON</span>
     </div>
+
+    <div class="err" id="errBox"></div>
 
     <div class="row">
       <div class="box">
@@ -187,13 +203,27 @@
     </div>
 
     <p class="small" style="margin-top:14px;">
-      Mic permissions usually require <b>HTTPS</b> when hosted. If this is opened as a local file and mic doesn’t work, host it (GitHub Pages / Netlify) and open the HTTPS link.
+      Microphone access needs <b>HTTPS</b>. GitHub Pages is HTTPS, so it should prompt for mic permission.
     </p>
   </div>
 
 <script>
 (() => {
-  // ---------- UI ----------
+  // -------- Error UI --------
+  const errBox = document.getElementById("errBox");
+  function showErr(msg) {
+    if (!errBox) return;
+    errBox.style.display = "block";
+    errBox.textContent = msg;
+  }
+  window.addEventListener("error", (e) => {
+    showErr("JavaScript error:\n" + (e.message || e.type) + "\n" + (e.filename || "") + ":" + (e.lineno || ""));
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    showErr("Unhandled promise rejection:\n" + (e.reason?.message || String(e.reason)));
+  });
+
+  // -------- Grab UI --------
   const startBtn = document.getElementById('startBtn');
   const autoLockBtn = document.getElementById('autoLockBtn');
   const manualLockBtn = document.getElementById('manualLockBtn');
@@ -214,9 +244,10 @@
   const twelvePartnersEl = document.getElementById('twelvePartners');
 
   const canvas = document.getElementById('strobe');
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas?.getContext('2d');
+  if (!ctx) showErr("Canvas context failed. Try another browser (Chrome recommended).");
 
-  // ---------- Presets ----------
+  // -------- Presets --------
   const PRESETS = {
     gtr_std: [
       { key: "E2", label: "E2 (6th)", freq: 82.4069 },
@@ -258,25 +289,119 @@
     ],
   };
 
+  // -------- Recommended defaults --------
+  const GATE_ON = true;
+  const RMS_GATE = 0.012;
+  const SMOOTH_ON = true;
+  const SMOOTH_WINDOW = 6;
+  const IN_TUNE_CENTS = 5;
+  const DISPLAY_CENTS_CLAMP = 50;
+
+  if (gatePill) gatePill.textContent = `Gate: ${GATE_ON ? "ON" : "OFF"}`;
+  if (smoothPill) smoothPill.textContent = `Smoothing: ${SMOOTH_ON ? "ON" : "OFF"}`;
+
+  // -------- Music helpers --------
+  function freqToMidi(f) { return 69 + 12 * Math.log2(f / 440); }
+  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+  function midiToNoteName(m) {
+    const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    const mi = Math.round(m);
+    const name = names[(mi % 12 + 12) % 12];
+    const oct = Math.floor(mi / 12) - 1;
+    return name + oct;
+  }
+  function centsOff(f, ref) { return 1200 * Math.log2(f / ref); }
+
   function activePresetKey() {
-    const preset = presetEl.value;
-    if (preset === "gtr_12" && twelvePartnersEl.checked) return "gtr_12_partners";
+    const preset = presetEl?.value || "gtr_std";
+    if (preset === "gtr_12" && twelvePartnersEl?.checked) return "gtr_12_partners";
     return preset;
   }
+  function getActiveList() { return PRESETS[activePresetKey()]; }
+  function getTargetByKey(key) { return getActiveList().find(x => x.key === key) || null; }
 
-  function getActiveList() {
-    return PRESETS[activePresetKey()];
+  function nearestStringInPreset(freq) {
+    const list = getActiveList();
+    let best = null, bestAbs = Infinity;
+    for (const s of list) {
+      const c = Math.abs(centsOff(freq, s.freq));
+      if (c < bestAbs) { bestAbs = c; best = s; }
+    }
+    return best ? { ...best, absCents: bestAbs } : null;
   }
 
-  function fillTargetOptions() {
-    const preset = presetEl.value;
+  // -------- Locks (DECLARE BEFORE ANY CALLS) --------
+  let autoLockEnabled = true;
+  let manualLockEnabled = false;
 
-    if (preset === "gtr_12") {
-      twelveWrapEl.style.display = "flex";
-    } else {
-      twelveWrapEl.style.display = "none";
-      twelvePartnersEl.checked = false;
+  let lockedFreq = null;
+  let lockedLabel = null;
+
+  let candidateMidi = null;
+  let candidateCount = 0;
+  const LOCK_FRAMES = 8;
+  const RELOCK_CENTS = 120;
+
+  let lastAutoFreq = null;
+  let lastAutoLabel = null;
+
+  function clearLocks() {
+    lockedFreq = null;
+    lockedLabel = null;
+    candidateMidi = null;
+    candidateCount = 0;
+    lastAutoFreq = null;
+    lastAutoLabel = null;
+  }
+
+  function updateLockUI() {
+    if (!lockPill || !autoLockBtn || !manualLockBtn) return;
+
+    if (manualLockEnabled) {
+      lockPill.textContent = `Mode: Manual lock (${lockedLabel || "—"})`;
+      autoLockBtn.textContent = "Auto-lock: OFF";
+      manualLockBtn.textContent = "Manual lock: ON";
+      return;
     }
+    lockPill.textContent = autoLockEnabled ? "Mode: Auto-lock" : "Mode: Free";
+    autoLockBtn.textContent = `Auto-lock: ${autoLockEnabled ? "ON" : "OFF"}`;
+    manualLockBtn.textContent = "Manual lock: OFF";
+  }
+
+  autoLockBtn?.addEventListener("click", () => {
+    manualLockEnabled = false;
+    autoLockEnabled = !autoLockEnabled;
+    clearLocks();
+    updateLockUI();
+  });
+
+  manualLockBtn?.addEventListener("click", () => {
+    manualLockEnabled = !manualLockEnabled;
+    if (manualLockEnabled) {
+      autoLockEnabled = false;
+      if (lastAutoFreq != null && lastAutoLabel != null) {
+        lockedFreq = lastAutoFreq;
+        lockedLabel = lastAutoLabel;
+      }
+    } else {
+      autoLockEnabled = true;
+      clearLocks();
+    }
+    updateLockUI();
+  });
+
+  updateLockUI();
+
+  // -------- Target/preset UI --------
+  function fillTargetOptions() {
+    const preset = presetEl?.value || "gtr_std";
+
+    if (twelveWrapEl && twelvePartnersEl) {
+      if (preset === "gtr_12") twelveWrapEl.style.display = "flex";
+      else { twelveWrapEl.style.display = "none"; twelvePartnersEl.checked = false; }
+    }
+
+    if (!targetEl) return;
 
     const list = getActiveList();
     targetEl.innerHTML = "";
@@ -293,155 +418,39 @@
       targetEl.appendChild(opt);
     }
 
-    if (preset === "gtr_12" && !twelvePartnersEl.checked) {
-      courseHintEl.textContent = "12-string: tune MAIN strings first. Then enable partners to tune the octave/unison strings.";
-    } else if (preset === "gtr_12" && twelvePartnersEl.checked) {
-      courseHintEl.textContent = "Partners mode: E/A/D/G are octave up. B & high E are unison.";
-    } else {
-      courseHintEl.textContent = "";
+    if (courseHintEl) {
+      if (preset === "gtr_12" && !twelvePartnersEl?.checked) {
+        courseHintEl.textContent = "12-string: tune MAIN strings first. Then enable partners to tune the octave/unison strings.";
+      } else if (preset === "gtr_12" && twelvePartnersEl?.checked) {
+        courseHintEl.textContent = "Partners mode: E/A/D/G are octave up. B & high E are unison.";
+      } else {
+        courseHintEl.textContent = "";
+      }
     }
 
-    // preset change resets locks (keeps behavior predictable)
     clearLocks();
   }
 
-  presetEl.addEventListener("change", fillTargetOptions);
-  twelvePartnersEl.addEventListener("change", fillTargetOptions);
-  targetEl.addEventListener("change", () => {
-    // picking a target string overrides auto detection; clear locks
-    clearLocks();
-  });
+  presetEl?.addEventListener("change", fillTargetOptions);
+  twelvePartnersEl?.addEventListener("change", fillTargetOptions);
+  targetEl?.addEventListener("change", clearLocks);
 
+  // Call after everything is initialized:
   fillTargetOptions();
 
-  // ---------- Music helpers ----------
-  function freqToMidi(f) { return 69 + 12 * Math.log2(f / 440); }
-  function midiToFreq(m) { return 440 * Math.pow(2, (m - 69) / 12); }
-  function midiToNoteName(m) {
-    const names = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
-    const mi = Math.round(m);
-    const name = names[(mi % 12 + 12) % 12];
-    const oct = Math.floor(mi / 12) - 1;
-    return name + oct;
-  }
-  function centsOff(f, ref) { return 1200 * Math.log2(f / ref); }
-
-  function nearestStringInPreset(freq) {
-    const list = getActiveList();
-    let best = null;
-    let bestAbs = Infinity;
-    for (const s of list) {
-      const c = Math.abs(centsOff(freq, s.freq));
-      if (c < bestAbs) { bestAbs = c; best = s; }
-    }
-    return best ? { ...best, absCents: bestAbs } : null;
-  }
-
-  function getTargetByKey(key) {
-    return getActiveList().find(x => x.key === key) || null;
-  }
-
-  // ---------- Tuner settings (recommended defaults) ----------
-  const GATE_ON = true;               // noise gate enabled
-  const RMS_GATE = 0.012;             // higher = ignores more quiet/noisy input
-  const SMOOTH_ON = true;             // smoothing enabled
-  const SMOOTH_WINDOW = 6;            // average N frames
-  const IN_TUNE_CENTS = 5;            // green zone
-  const DISPLAY_CENTS_CLAMP = 50;     // strobe speed clamps beyond this
-
-  gatePill.textContent = `Gate: ${GATE_ON ? "ON" : "OFF"}`;
-  smoothPill.textContent = `Smoothing: ${SMOOTH_ON ? "ON" : "OFF"}`;
-
-  // ---------- Auto-lock + Manual lock ----------
-  let autoLockEnabled = true;
-  let manualLockEnabled = false;
-
-  // "Locked" reference note (for display + cents calc)
-  let lockedFreq = null;
-  let lockedLabel = null;
-
-  // For auto-lock confidence
-  let candidateMidi = null;
-  let candidateCount = 0;
-  const LOCK_FRAMES = 8;          // lock after this many consistent frames
-  const RELOCK_CENTS = 120;       // unlock when you switch strings far away
-
-  // Last computed nearest note in auto mode (for manual lock)
-  let lastAutoFreq = null;
-  let lastAutoLabel = null;
-
-  function clearLocks() {
-    lockedFreq = null;
-    lockedLabel = null;
-    candidateMidi = null;
-    candidateCount = 0;
-    lastAutoFreq = null;
-    lastAutoLabel = null;
-  }
-
-  function updateLockUI() {
-    if (manualLockEnabled) {
-      lockPill.textContent = `Mode: Manual lock (${lockedLabel || "—"})`;
-      autoLockBtn.textContent = "Auto-lock: OFF";
-      manualLockBtn.textContent = "Manual lock: ON";
-      return;
-    }
-    lockPill.textContent = autoLockEnabled ? "Mode: Auto-lock" : "Mode: Free";
-    autoLockBtn.textContent = `Auto-lock: ${autoLockEnabled ? "ON" : "OFF"}`;
-    manualLockBtn.textContent = "Manual lock: OFF";
-  }
-
-  autoLockBtn.addEventListener("click", () => {
-    // toggling auto-lock disables manual lock
-    manualLockEnabled = false;
-    autoLockEnabled = !autoLockEnabled;
-    clearLocks();
-    updateLockUI();
-  });
-
-  manualLockBtn.addEventListener("click", () => {
-    manualLockEnabled = !manualLockEnabled;
-
-    if (manualLockEnabled) {
-      // manual lock forces auto-lock off
-      autoLockEnabled = false;
-
-      // lock to current/last auto-detected note if available
-      if (lastAutoFreq != null && lastAutoLabel != null) {
-        lockedFreq = lastAutoFreq;
-        lockedLabel = lastAutoLabel;
-      } else {
-        lockedFreq = null;
-        lockedLabel = null;
-      }
-    } else {
-      // back to auto-lock on by default
-      autoLockEnabled = true;
-      clearLocks();
-    }
-    updateLockUI();
-  });
-
-  updateLockUI();
-
-  // ---------- Audio ----------
-  let audioCtx, analyser, buf, rafId, stream;
-  const FFT_SIZE = 2048;
-
-  // Smoothing buffer for detected frequency
+  // -------- Smoothing --------
   const smoothBuf = [];
   function smoothFreq(f) {
     if (!SMOOTH_ON) return f;
     smoothBuf.push(f);
     while (smoothBuf.length > SMOOTH_WINDOW) smoothBuf.shift();
-    const sum = smoothBuf.reduce((a,b)=>a+b,0);
-    return sum / smoothBuf.length;
+    return smoothBuf.reduce((a,b)=>a+b,0) / smoothBuf.length;
   }
   function resetSmoothing() { smoothBuf.length = 0; }
 
-  // Autocorrelation pitch detection with RMS gate + simple harmonic bias
+  // -------- Pitch detection (autocorrelation) --------
   function autoCorrelate(timeDomainBuffer, sampleRate) {
-    // RMS (noise gate)
+    // RMS gate
     let rms = 0;
     for (let i = 0; i < timeDomainBuffer.length; i++) {
       const v = timeDomainBuffer[i];
@@ -450,7 +459,7 @@
     rms = Math.sqrt(rms / timeDomainBuffer.length);
     if (GATE_ON && rms < RMS_GATE) return null;
 
-    // Remove DC offset
+    // remove DC
     const b = timeDomainBuffer.slice();
     let mean = 0;
     for (let i = 0; i < b.length; i++) mean += b[i];
@@ -460,59 +469,51 @@
     const size = b.length;
     const maxLag = Math.floor(size / 2);
 
-    // Range: bass E1 (~41Hz) up to 12-string partners (up to ~392Hz) plus headroom
     const minFreq = 35;
     const maxFreq = 650;
     const minLag = Math.floor(sampleRate / maxFreq);
     const maxLag2 = Math.min(maxLag, Math.floor(sampleRate / minFreq));
 
     let bestLag = -1;
-    let bestCorr = 0;
+    let bestScore = 0;
 
-    // Slightly favor lower lags less (helps avoid octave-harmonic mistakes)
     for (let lag = minLag; lag <= maxLag2; lag++) {
       let corr = 0;
       for (let i = 0; i < size - lag; i++) corr += b[i] * b[i + lag];
       corr = corr / (size - lag);
 
-      // Harmonic bias: prefer larger lags a bit (lower frequency fundamentals)
-      // bias factor grows slowly with lag
+      // small bias toward fundamentals
       const bias = 1 + (lag / maxLag2) * 0.12;
       const score = corr * bias;
 
-      if (score > bestCorr) {
-        bestCorr = score;
-        bestLag = lag;
-      }
+      if (score > bestScore) { bestScore = score; bestLag = lag; }
     }
 
-    if (bestLag === -1 || bestCorr < 0.1) return null;
+    if (bestLag === -1 || bestScore < 0.1) return null;
 
-    // Parabolic interpolation for smoother estimate
-    const c0 = correlationAtLag(b, bestLag - 1);
-    const c1 = correlationAtLag(b, bestLag);
-    const c2 = correlationAtLag(b, bestLag + 1);
+    // parabola interpolation
+    const c0 = corrAt(b, bestLag - 1);
+    const c1 = corrAt(b, bestLag);
+    const c2 = corrAt(b, bestLag + 1);
     const denom = (2 * c1 - c0 - c2);
     const shift = denom ? (c0 - c2) / (2 * denom) : 0;
-    const lagEst = bestLag + shift;
 
+    const lagEst = bestLag + shift;
     let freq = sampleRate / lagEst;
 
-    // Additional harmonic correction:
-    // If the "best" freq seems close to 2x a preset string, snap to fundamental.
-    // (helps when detector locks to second harmonic)
+    // harmonic correction (snap to half if that matches preset better)
     const near = nearestStringInPreset(freq);
     if (near && near.absCents > 25) {
       const half = freq / 2;
       const nearHalf = nearestStringInPreset(half);
-      if (nearHalf && nearHalf.absCents < near.absCents && nearHalf.absCents < 18) {
+      if (nearHalf && nearHalf.absCents < 18 && nearHalf.absCents < near.absCents) {
         freq = half;
       }
     }
 
     return freq;
 
-    function correlationAtLag(buf, lag) {
+    function corrAt(buf, lag) {
       if (lag < 1) return 0;
       let sum = 0;
       for (let i = 0; i < buf.length - lag; i++) sum += buf[i] * buf[i + lag];
@@ -520,100 +521,73 @@
     }
   }
 
-  // ---------- Strobe drawing ----------
+  // -------- Strobe drawing --------
   let strobeOffset = 0;
 
   function drawStrobe(cents) {
-    const w = canvas.width;
-    const h = canvas.height;
+    if (!ctx) return;
+
+    const w = canvas.width, h = canvas.height;
+    ctx.clearRect(0,0,w,h);
 
     // background
-    ctx.clearRect(0,0,w,h);
-    ctx.fillStyle = "#090a0f";
+    ctx.fillStyle = "#07080d";
     ctx.fillRect(0,0,w,h);
 
-    // center "in tune" band (subtle)
+    // subtle in-tune band
     const centerX = w / 2;
-    ctx.fillStyle = "rgba(6,214,160,0.08)";
-    const greenWidth = (IN_TUNE_CENTS / DISPLAY_CENTS_CLAMP) * (w * 0.55);
+    const greenWidth = (IN_TUNE_CENTS / DISPLAY_CENTS_CLAMP) * (w * 0.60);
+    ctx.fillStyle = "rgba(6,214,160,0.12)";
     ctx.fillRect(centerX - greenWidth/2, 0, greenWidth, h);
 
-    // clamp cents for display speed
     const c = Math.max(-DISPLAY_CENTS_CLAMP, Math.min(DISPLAY_CENTS_CLAMP, cents || 0));
     const abs = Math.abs(c);
 
-    // stripe parameters
-    const stripeW = 26;          // stripe width
-    const gapW = 22;             // gap width
+    const stripeW = 28;
+    const gapW = 18;
     const period = stripeW + gapW;
 
-    // speed: proportional to cents; near 0 -> near stopped
-    // sign: flat -> left, sharp -> right
-    const maxSpeed = 18; // px/frame at 50 cents
+    const maxSpeed = 20;
     let speed = (abs / DISPLAY_CENTS_CLAMP) * maxSpeed;
     speed *= (c < 0 ? -1 : 1);
-
-    // deadzone to "stop" when in tune
     if (abs <= IN_TUNE_CENTS) speed = 0;
 
-    strobeOffset = (strobeOffset + speed);
-    // keep it bounded
+    strobeOffset += speed;
     if (strobeOffset > period) strobeOffset -= period;
     if (strobeOffset < -period) strobeOffset += period;
 
-    // draw moving diagonal stripes
-    // We draw in 3 bands to feel like tuner "tracks"
     const bands = 3;
     const bandH = h / bands;
 
     for (let b = 0; b < bands; b++) {
       const y0 = b * bandH;
-      // slight alternation per band (gives richer strobe feel)
-      const localOffset = strobeOffset * (b % 2 === 0 ? 1 : 0.85);
+      const localOffset = strobeOffset * (b % 2 === 0 ? 1 : 0.86);
 
-      // choose color intensity based on "how close"
-      const intensity = Math.max(0.15, 1 - (abs / DISPLAY_CENTS_CLAMP));
-      ctx.fillStyle = `rgba(255,190,11,${0.22 + intensity*0.25})`;
+      const intensity = Math.max(0.25, 1 - (abs / DISPLAY_CENTS_CLAMP));
+      ctx.fillStyle = `rgba(255,190,11,${0.35 + intensity*0.35})`;
 
-      // diagonal effect: translate with x and y
       for (let x = -period*2; x < w + period*2; x += period) {
         const xPos = x + localOffset;
         ctx.save();
         ctx.translate(xPos, y0);
-        // diagonal tilt
         ctx.transform(1, 0.18, 0, 1, 0, 0);
         ctx.fillRect(0, 0, stripeW, bandH);
         ctx.restore();
       }
 
-      // band separator line
       if (b < bands - 1) {
-        ctx.strokeStyle = "rgba(255,255,255,.06)";
+        ctx.strokeStyle = "rgba(255,255,255,.08)";
         ctx.beginPath();
         ctx.moveTo(0, y0 + bandH);
         ctx.lineTo(w, y0 + bandH);
         ctx.stroke();
       }
     }
-
-    // top overlay vignette
-    const grd = ctx.createLinearGradient(0,0,0,h);
-    grd.addColorStop(0, "rgba(0,0,0,.25)");
-    grd.addColorStop(0.5, "rgba(0,0,0,0)");
-    grd.addColorStop(1, "rgba(0,0,0,.25)");
-    ctx.fillStyle = grd;
-    ctx.fillRect(0,0,w,h);
-
-    // label
-    ctx.fillStyle = "rgba(255,255,255,.70)";
-    ctx.font = "700 26px system-ui";
-    const txt = (abs <= IN_TUNE_CENTS) ? "IN TUNE" : (c < 0 ? "FLAT" : "SHARP");
-    ctx.fillText(txt, 16, 34);
   }
 
-  // ---------- Rendering ----------
   function setStatus(cents) {
     const abs = Math.abs(cents);
+    if (!statusEl) return;
     if (abs <= IN_TUNE_CENTS) {
       statusEl.innerHTML = `<span class="statusOk">In tune</span> (±${IN_TUNE_CENTS}¢)`;
     } else if (abs <= 15) {
@@ -632,36 +606,30 @@
       noteEl.textContent = "—";
       freqEl.textContent = "— Hz";
       centsEl.textContent = "—";
-      statusEl.textContent = "Play a string";
-      nearestStringHintEl.textContent = "";
+      if (statusEl) statusEl.textContent = "Play a string";
+      if (nearestStringHintEl) nearestStringHintEl.textContent = "";
       drawStrobe(0);
       return;
     }
 
-    // Smooth the measured frequency
     const f = smoothFreq(freq);
 
-    // For hint: nearest string in selected preset (informational)
     const nearPreset = nearestStringInPreset(f);
-    if (nearPreset) {
-      const closeness = Math.round(nearPreset.absCents);
-      nearestStringHintEl.textContent = `Nearest preset string: ${nearPreset.key} (${closeness}¢ away)`;
-    } else {
-      nearestStringHintEl.textContent = "";
+    if (nearestStringHintEl) {
+      nearestStringHintEl.textContent = nearPreset
+        ? `Nearest preset string: ${nearPreset.key} (${Math.round(nearPreset.absCents)}¢ away)`
+        : "";
     }
 
-    // Manual target overrides lock logic
-    const targetKey = targetEl.value;
+    const targetKey = targetEl?.value || "";
     let refFreq, refLabel;
 
     if (targetKey) {
       const t = getTargetByKey(targetKey);
       refFreq = t ? t.freq : null;
       refLabel = targetKey;
-      // when user forces a target, keep locks cleared
       clearLocks();
     } else {
-      // Auto mode note
       const midi = freqToMidi(f);
       const nearestMidi = Math.round(midi);
       const nearestFreq = midiToFreq(nearestMidi);
@@ -671,12 +639,10 @@
       lastAutoLabel = nearestLabel;
 
       if (manualLockEnabled) {
-        // manual lock uses lockedFreq if available; otherwise fall back to nearest
         if (lockedFreq != null && lockedLabel != null) {
           refFreq = lockedFreq;
           refLabel = lockedLabel;
 
-          // if user clearly switched strings, unlock but keep manual mode ON
           const away = Math.abs(centsOff(f, lockedFreq));
           if (away > RELOCK_CENTS) {
             lockedFreq = nearestFreq;
@@ -690,7 +656,6 @@
         }
       } else if (autoLockEnabled) {
         if (lockedFreq == null) {
-          // build confidence before locking
           if (candidateMidi === nearestMidi) candidateCount++;
           else { candidateMidi = nearestMidi; candidateCount = 1; }
 
@@ -701,7 +666,6 @@
           refFreq = nearestFreq;
           refLabel = nearestLabel;
         } else {
-          // keep locked unless user switches strings far away
           const away = Math.abs(centsOff(f, lockedFreq));
           if (away > RELOCK_CENTS) {
             clearLocks();
@@ -713,17 +677,13 @@
           }
         }
       } else {
-        // free running
         refFreq = nearestFreq;
         refLabel = nearestLabel;
       }
     }
 
     if (!refFreq) {
-      noteEl.textContent = "—";
-      freqEl.textContent = f.toFixed(2) + " Hz";
-      centsEl.textContent = "—";
-      statusEl.textContent = "Select a target";
+      if (statusEl) statusEl.textContent = "Select a target";
       drawStrobe(0);
       return;
     }
@@ -736,16 +696,23 @@
     centsEl.textContent = (centsRounded > 0 ? "+" : "") + centsRounded + "¢";
     setStatus(cents);
     drawStrobe(cents);
-
     updateLockUI();
   }
 
-  // ---------- Start / loop ----------
+  // -------- Audio plumbing --------
+  let audioCtx, analyser, buf, rafId, stream;
+  const FFT_SIZE = 2048;
+
   async function start() {
+    if (errBox) errBox.style.display = "none";
     startBtn.disabled = true;
     startBtn.textContent = "Starting…";
 
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("getUserMedia not available. Use Chrome and HTTPS.");
+      }
+
       stream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
       });
@@ -755,7 +722,7 @@
 
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = FFT_SIZE;
-      analyser.smoothingTimeConstant = 0.0; // we do our own smoothing
+      analyser.smoothingTimeConstant = 0.0;
       src.connect(analyser);
 
       buf = new Float32Array(analyser.fftSize);
@@ -765,12 +732,8 @@
         const f = autoCorrelate(buf, audioCtx.sampleRate);
         const freq = (f && f >= 35 && f <= 650) ? f : null;
 
-        if (!freq) {
-          resetSmoothing();
-          render(null);
-        } else {
-          render(freq);
-        }
+        if (!freq) { resetSmoothing(); render(null); }
+        else render(freq);
 
         rafId = requestAnimationFrame(loop);
       };
@@ -778,16 +741,14 @@
       loop();
       startBtn.textContent = "Mic running";
     } catch (e) {
-      console.error(e);
       startBtn.disabled = false;
       startBtn.textContent = "Start microphone";
-      alert("Couldn't access microphone. Make sure you're on HTTPS and you allowed mic permissions.");
+      showErr("Mic start failed:\n" + (e?.message || String(e)) + "\n\nOn Android: Chrome → Settings → Site settings → Microphone → Allow");
     }
   }
 
-  startBtn.addEventListener('click', start);
+  startBtn?.addEventListener('click', start);
 
-  // Cleanup on background
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       if (rafId) cancelAnimationFrame(rafId);
@@ -803,7 +764,7 @@
     }
   });
 
-  // Initial strobe
+  // Initial draw
   drawStrobe(0);
 })();
 </script>
