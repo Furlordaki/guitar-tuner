@@ -83,9 +83,9 @@
       background:#07080d;
     }
     .centerLine{
-      position: absolute;
-      left: 12px; right: 12px;
-      top: 36px; /* aligns with canvas top inside wrap */
+      position:absolute;
+      left:12px; right:12px;
+      top:36px;
       height:120px;
       pointer-events:none;
     }
@@ -141,7 +141,7 @@
 <body>
   <div class="card">
     <h1>Strobe Guitar Tuner</h1>
-    <p>Tap <b>Start microphone</b>. If notes update but the strobe doesn’t move, this build fixes that by animating the strobe independently.</p>
+    <p>Tap <b>Start microphone</b>. This version uses a YIN detector (much more reliable for guitar).</p>
 
     <button id="startBtn">Start microphone</button>
 
@@ -156,7 +156,7 @@
 
     <div style="margin-top:8px;">
       <span class="pill" id="lockPill">Mode: Auto-lock</span>
-      <span class="pill" id="gatePill" style="margin-left:8px;">Gate: 0.006</span>
+      <span class="pill" id="gatePill" style="margin-left:8px;">Gate: 0.004</span>
       <span class="pill" id="smoothPill" style="margin-left:8px;">Smoothing: ON</span>
     </div>
 
@@ -173,6 +173,7 @@
           <div class="small">Input Level</div>
           <div class="meter"><div class="meterFill" id="lvlFill"></div></div>
           <div class="small" id="lvlText" style="margin-top:6px;">RMS: —</div>
+          <div class="small" id="pitchText" style="margin-top:6px;">Pitch: —</div>
         </div>
       </div>
 
@@ -183,8 +184,8 @@
 
         <div style="margin-top:12px;">
           <div class="small">Noise Gate (lower = more sensitive)</div>
-          <input id="gateSlider" type="range" min="0.001" max="0.03" step="0.001" value="0.006" />
-          <div class="small muted">Tip: if notes flicker, try 0.004–0.008. If nothing happens, try 0.002–0.003.</div>
+          <input id="gateSlider" type="range" min="0.001" max="0.03" step="0.001" value="0.004" />
+          <div class="small muted">If you see input but no pitch: try 0.003 or 0.002.</div>
         </div>
       </div>
     </div>
@@ -218,10 +219,6 @@
         <span>Flat</span><span>In tune</span><span>Sharp</span>
       </div>
     </div>
-
-    <p class="small" style="margin-top:14px;">
-      12-string tip: pluck one string in the course and mute its partner with a fingertip while tuning.
-    </p>
   </div>
 
 <script>
@@ -254,6 +251,7 @@
 
   const lvlFill = document.getElementById("lvlFill");
   const lvlText = document.getElementById("lvlText");
+  const pitchText = document.getElementById("pitchText");
   const gateSlider = document.getElementById("gateSlider");
 
   const canvas = document.getElementById("strobe");
@@ -333,7 +331,6 @@
 
     clearLocks();
   }
-
   presetEl.addEventListener("change", fillTargetOptions);
   twelvePartnersEl.addEventListener("change", fillTargetOptions);
   targetEl.addEventListener("change", clearLocks);
@@ -388,7 +385,6 @@
     candidateMidi=null; candidateCount=0;
     lastAutoFreq=null; lastAutoLabel=null;
   }
-
   function updateLockUI(){
     if (manualLockEnabled){
       lockPill.textContent = `Mode: Manual lock (${lockedLabel||"—"})`;
@@ -400,14 +396,12 @@
     autoLockBtn.textContent = `Auto-lock: ${autoLockEnabled ? "ON" : "OFF"}`;
     manualLockBtn.textContent = "Manual lock: OFF";
   }
-
   autoLockBtn.addEventListener("click", ()=>{
     manualLockEnabled=false;
     autoLockEnabled=!autoLockEnabled;
     clearLocks();
     updateLockUI();
   });
-
   manualLockBtn.addEventListener("click", ()=>{
     manualLockEnabled=!manualLockEnabled;
     if (manualLockEnabled){
@@ -421,7 +415,6 @@
     }
     updateLockUI();
   });
-
   updateLockUI();
   fillTargetOptions();
 
@@ -437,12 +430,11 @@
 
   // ----- strobe (independent animation) -----
   let strobeOffset = 0;
-  let lastCentsForStrobe = 0;  // drives animation
-  let lastSignalTs = 0;        // when we last had a valid pitch
-  const SIGNAL_HOLD_MS = 600;  // keep strobe moving briefly even if detection flickers
+  let lastCentsForStrobe = 0;
+  let lastSignalTs = 0;
+  const SIGNAL_HOLD_MS = 600;
 
   function drawStrobe(cents){
-    // guard against NaN / Infinity
     if (!Number.isFinite(cents)) cents = 0;
 
     const w=canvas.width, h=canvas.height;
@@ -458,12 +450,11 @@
     const abs=Math.abs(c);
 
     const stripeW=28, gapW=18, period=stripeW+gapW;
-    const maxSpeed=20;
+    const maxSpeed=22;
 
     let speed=(abs/DISPLAY_CENTS_CLAMP)*maxSpeed;
     speed *= (c<0?-1:1);
     if (abs<=IN_TUNE_CENTS) speed=0;
-    if (!Number.isFinite(speed)) speed = 0;
 
     strobeOffset += speed;
     if (strobeOffset>period) strobeOffset-=period;
@@ -492,7 +483,6 @@
   }
 
   function strobeAnimationLoop(){
-    // If signal recently present, animate with last cents; otherwise slowly settle to 0
     const now = performance.now();
     if (now - lastSignalTs > SIGNAL_HOLD_MS) {
       lastCentsForStrobe *= 0.90;
@@ -518,87 +508,72 @@
     }
   }
 
-  // ----- pitch detect (autocorrelation + gate + harmonic help) -----
-  function autoCorrelate(timeDomainBuffer, sampleRate){
-    // RMS
-    let rms=0;
-    for (let i=0;i<timeDomainBuffer.length;i++){
-      const v=timeDomainBuffer[i];
-      rms += v*v;
-    }
-    rms = Math.sqrt(rms/timeDomainBuffer.length);
+  // ----- YIN pitch detector -----
+  // Returns {freq, prob} or null
+  function yinPitch(buffer, sampleRate, minFreq=35, maxFreq=650) {
+    const N = buffer.length;
 
-    // input level UI
-    const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
-    lvlFill.style.width = pct.toFixed(1)+"%";
-    lvlText.textContent = "RMS: " + rms.toFixed(4);
+    // Difference function d(tau)
+    const minTau = Math.floor(sampleRate / maxFreq);
+    const maxTau = Math.min(Math.floor(sampleRate / minFreq), N - 2);
 
-    // gate
-    if (rms < gateThreshold) return null;
-
-    // remove DC
-    const b=timeDomainBuffer.slice();
-    let mean=0;
-    for (let i=0;i<b.length;i++) mean += b[i];
-    mean/=b.length;
-    for (let i=0;i<b.length;i++) b[i]-=mean;
-
-    const size=b.length;
-    const maxLag=Math.floor(size/2);
-
-    const minFreq=35, maxFreq=650;
-    const minLag=Math.floor(sampleRate/maxFreq);
-    const maxLag2=Math.min(maxLag, Math.floor(sampleRate/minFreq));
-
-    let bestLag=-1, bestScore=0;
-
-    for (let lag=minLag; lag<=maxLag2; lag++){
-      let corr=0;
-      for (let i=0;i<size-lag;i++) corr += b[i]*b[i+lag];
-      corr = corr/(size-lag);
-
-      const bias = 1 + (lag/maxLag2)*0.12;
-      const score = corr*bias;
-      if (score>bestScore){ bestScore=score; bestLag=lag; }
+    const d = new Float32Array(maxTau + 1);
+    for (let tau = 1; tau <= maxTau; tau++) {
+      let sum = 0;
+      for (let i = 0; i < N - tau; i++) {
+        const delta = buffer[i] - buffer[i + tau];
+        sum += delta * delta;
+      }
+      d[tau] = sum;
     }
 
-    if (bestLag===-1 || bestScore<0.1) return null;
-
-    // parabola interpolation
-    const c0=corrAt(b,bestLag-1), c1=corrAt(b,bestLag), c2=corrAt(b,bestLag+1);
-    const denom=(2*c1-c0-c2);
-    const shift = denom ? (c0-c2)/(2*denom) : 0;
-    const lagEst = bestLag + shift;
-
-    let freq = sampleRate/lagEst;
-
-    // harmonic correction
-    const near = nearestStringInPreset(freq);
-    if (near && near.absCents>25){
-      const half=freq/2;
-      const nearHalf=nearestStringInPreset(half);
-      if (nearHalf && nearHalf.absCents<18 && nearHalf.absCents<near.absCents) freq=half;
+    // Cumulative mean normalized difference function (CMND)
+    const cmnd = new Float32Array(maxTau + 1);
+    cmnd[0] = 1;
+    let runningSum = 0;
+    for (let tau = 1; tau <= maxTau; tau++) {
+      runningSum += d[tau];
+      cmnd[tau] = d[tau] * tau / (runningSum || 1);
     }
-    return freq;
 
-    function corrAt(buf, lag){
-      if (lag<1) return 0;
-      let sum=0;
-      for (let i=0;i<buf.length-lag;i++) sum += buf[i]*buf[i+lag];
-      return sum/(buf.length-lag);
+    // Absolute threshold
+    const threshold = 0.12; // lower = more sensitive
+    let tauEstimate = -1;
+    for (let tau = minTau; tau <= maxTau; tau++) {
+      if (cmnd[tau] < threshold) {
+        // Find local minimum around this tau
+        while (tau + 1 <= maxTau && cmnd[tau + 1] < cmnd[tau]) tau++;
+        tauEstimate = tau;
+        break;
+      }
     }
+    if (tauEstimate === -1) return null;
+
+    // Parabolic interpolation for better precision
+    const x0 = tauEstimate - 1;
+    const x1 = tauEstimate;
+    const x2 = tauEstimate + 1;
+    if (x0 < 1 || x2 > maxTau) return null;
+
+    const s0 = cmnd[x0], s1 = cmnd[x1], s2 = cmnd[x2];
+    const denom = (2*s1 - s0 - s2);
+    const betterTau = denom ? (x1 + (s0 - s2) / (2*denom)) : x1;
+
+    const freq = sampleRate / betterTau;
+    const prob = 1 - cmnd[tauEstimate]; // a crude "confidence"
+    if (!Number.isFinite(freq) || freq < minFreq || freq > maxFreq) return null;
+
+    return { freq, prob };
   }
 
-  function render(freq){
-    if (!freq){
-      noteEl.textContent="—";
-      freqEl.textContent="— Hz";
-      centsEl.textContent="—";
-      statusEl.textContent="Play a string";
-      nearestStringHintEl.textContent="";
-      return;
-    }
+  function rmsOf(buf){
+    let s=0;
+    for (let i=0;i<buf.length;i++){ const v=buf[i]; s += v*v; }
+    return Math.sqrt(s / buf.length);
+  }
 
+  // ----- main render -----
+  function renderFromFrequency(freq){
     const f = smoothFreq(freq);
 
     const nearPreset = nearestStringInPreset(f);
@@ -658,12 +633,19 @@
     setStatus(cents);
     updateLockUI();
 
-    // Drive the independent strobe loop:
     if (Number.isFinite(cents)) {
       lastCentsForStrobe = cents;
       lastSignalTs = performance.now();
     }
   }
+
+  // ----- gate -----
+  let gateThreshold = Number(gateSlider.value);
+  gatePill.textContent = `Gate: ${gateThreshold.toFixed(3)}`;
+  gateSlider.addEventListener("input", ()=>{
+    gateThreshold = Number(gateSlider.value);
+    gatePill.textContent = `Gate: ${gateThreshold.toFixed(3)}`;
+  });
 
   // ----- audio loop -----
   let audioCtx, analyser, buf, rafId, stream;
@@ -683,7 +665,6 @@
       if (audioCtx.state !== "running") await audioCtx.resume();
 
       const src = audioCtx.createMediaStreamSource(stream);
-
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = FFT_SIZE;
       analyser.smoothingTimeConstant = 0.0;
@@ -693,11 +674,41 @@
 
       const loop = () => {
         analyser.getFloatTimeDomainData(buf);
-        const f = autoCorrelate(buf, audioCtx.sampleRate);
-        const freq = (f && f >= 35 && f <= 650) ? f : null;
 
-        if (!freq){ resetSmoothing(); render(null); }
-        else render(freq);
+        const rms = rmsOf(buf);
+        const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
+        lvlFill.style.width = pct.toFixed(1)+"%";
+        lvlText.textContent = "RMS: " + rms.toFixed(4);
+
+        // Gate check
+        if (rms < gateThreshold) {
+          pitchText.textContent = "Pitch: — (below gate)";
+          resetSmoothing();
+          noteEl.textContent="—";
+          freqEl.textContent="— Hz";
+          centsEl.textContent="—";
+          statusEl.textContent="Play a string";
+          nearestStringHintEl.textContent="";
+          rafId = requestAnimationFrame(loop);
+          return;
+        }
+
+        // YIN pitch
+        const res = yinPitch(buf, audioCtx.sampleRate, 35, 650);
+        if (!res) {
+          pitchText.textContent = "Pitch: — (no pitch)";
+          resetSmoothing();
+          noteEl.textContent="—";
+          freqEl.textContent="— Hz";
+          centsEl.textContent="—";
+          statusEl.textContent="Try plucking one string cleanly";
+          nearestStringHintEl.textContent="";
+          rafId = requestAnimationFrame(loop);
+          return;
+        }
+
+        pitchText.textContent = `Pitch: ${res.freq.toFixed(2)} Hz (conf ${res.prob.toFixed(2)})`;
+        renderFromFrequency(res.freq);
 
         rafId = requestAnimationFrame(loop);
       };
@@ -726,7 +737,12 @@
 
       lastCentsForStrobe = 0;
       lastSignalTs = 0;
-      render(null);
+      noteEl.textContent="—";
+      freqEl.textContent="— Hz";
+      centsEl.textContent="—";
+      statusEl.textContent="Play a string";
+      nearestStringHintEl.textContent="";
+      pitchText.textContent="Pitch: —";
     }
   });
 
