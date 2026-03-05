@@ -1,245 +1,250 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Guitar Tuner</title>
-<style>
-
-body{
-background:#0b0c10;
-color:white;
-font-family:Arial;
-text-align:center;
-padding:20px;
-}
-
-button{
-padding:14px 20px;
-font-size:18px;
-background:#3a86ff;
-border:none;
-border-radius:10px;
-color:white;
-cursor:pointer;
-}
-
-#note{
-font-size:60px;
-font-weight:bold;
-margin-top:20px;
-}
-
-#freq{
-font-size:22px;
-opacity:.8;
-}
-
-#cents{
-font-size:40px;
-margin-top:10px;
-}
-
-canvas{
-margin-top:30px;
-width:100%;
-max-width:600px;
-height:120px;
-background:black;
-border-radius:10px;
-}
-
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Guitar Tuner</title>
+  <style>
+    body{margin:0;padding:16px;font-family:system-ui,Arial;background:#0b0c10;color:#e8e8e8}
+    .card{max-width:740px;margin:0 auto;background:#14161c;border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
+    h1{margin:0 0 8px 0;font-size:22px}
+    p{margin:0 0 12px 0;opacity:.8;line-height:1.35}
+    button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#3a86ff;color:white;font-weight:800;cursor:pointer}
+    button:disabled{opacity:.6;cursor:not-allowed}
+    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
+    .box{flex:1;min-width:240px;background:#0f1117;border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px}
+    .big{font-size:44px;font-weight:900;line-height:1}
+    .muted{opacity:.75}
+    canvas{width:100%;height:120px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#07080d;display:block}
+    .err{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,0,110,.12);border:1px solid rgba(255,0,110,.35);white-space:pre-wrap;font-size:12.5px;line-height:1.35}
+    .meter{margin-top:10px;height:12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);overflow:hidden}
+    .fill{height:100%;width:0%;background:rgba(58,134,255,.9)}
+  </style>
 </head>
-
 <body>
+  <div class="card">
+    <h1>Strobe Guitar Tuner</h1>
+    <p>If anything breaks, you’ll see an error box. Open with cache-buster: <span class="muted">?v=123</span>.</p>
 
-<h2>Strobe Guitar Tuner</h2>
+    <button id="startBtn">Start microphone</button>
 
-<button id="startBtn">Start Microphone</button>
+    <div id="err" class="err"></div>
 
-<div id="note">—</div>
-<div id="freq">— Hz</div>
-<div id="cents">—</div>
+    <div class="row">
+      <div class="box">
+        <div class="muted">Detected</div>
+        <div class="big" id="note">—</div>
+        <div class="muted" id="freq">— Hz</div>
+        <div class="muted" id="cents">—</div>
 
-<canvas id="strobe" width="800" height="120"></canvas>
+        <div style="margin-top:10px">
+          <div class="muted">Input level</div>
+          <div class="meter"><div class="fill" id="lvl"></div></div>
+          <div class="muted" id="rms">RMS: —</div>
+        </div>
+      </div>
+
+      <div class="box">
+        <div class="muted">Strobe</div>
+        <canvas id="strobe" width="900" height="240"></canvas>
+        <div class="muted" style="margin-top:8px">Tip: pluck one open string cleanly and mute the others.</div>
+      </div>
+    </div>
+  </div>
 
 <script>
-
-let audioContext
-let analyser
-let data
-let running=false
-
-const noteEl=document.getElementById("note")
-const freqEl=document.getElementById("freq")
-const centsEl=document.getElementById("cents")
-
-const canvas=document.getElementById("strobe")
-const ctx=canvas.getContext("2d")
-
-let strobeOffset=0
-let lastCents=0
-
-const notes=["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"]
-
-function freqToNote(freq){
-
-let midi=69+12*Math.log2(freq/440)
-let rounded=Math.round(midi)
-
-let note=notes[(rounded%12+12)%12]
-let octave=Math.floor(rounded/12)-1
-
-let ref=440*Math.pow(2,(rounded-69)/12)
-
-let cents=1200*Math.log2(freq/ref)
-
-return{
-note:note+octave,
-cents:cents
-}
-
-}
-
-function autoCorrelate(buffer,sampleRate){
-
-let SIZE=buffer.length
-let rms=0
-
-for(let i=0;i<SIZE;i++){
-let val=buffer[i]
-rms+=val*val
-}
-
-rms=Math.sqrt(rms/SIZE)
-
-if(rms<0.01)return null
-
-let r1=0
-let r2=SIZE-1
-
-for(let i=0;i<SIZE/2;i++){
-if(Math.abs(buffer[i])<0.2){r1=i;break}
-}
-
-for(let i=1;i<SIZE/2;i++){
-if(Math.abs(buffer[SIZE-i])<0.2){r2=SIZE-i;break}
-}
-
-buffer=buffer.slice(r1,r2)
-SIZE=buffer.length
-
-let c=new Array(SIZE).fill(0)
-
-for(let i=0;i<SIZE;i++){
-for(let j=0;j<SIZE-i;j++){
-c[i]+=buffer[j]*buffer[j+i]
-}
-}
-
-let d=0
-while(c[d]>c[d+1])d++
-
-let maxval=-1
-let maxpos=-1
-
-for(let i=d;i<SIZE;i++){
-if(c[i]>maxval){
-maxval=c[i]
-maxpos=i
-}
-}
-
-let T0=maxpos
-
-return sampleRate/T0
-
-}
-
-function drawStrobe(cents){
-
-ctx.clearRect(0,0,canvas.width,canvas.height)
-
-let stripe=40
-
-let speed=cents/3
-
-strobeOffset+=speed
-
-for(let x=-stripe*2;x<canvas.width+stripe*2;x+=stripe){
-
-let pos=x+strobeOffset%stripe
-
-ctx.fillStyle="orange"
-ctx.fillRect(pos,0,stripe/2,canvas.height)
-
-}
-
-ctx.fillStyle="white"
-ctx.fillRect(canvas.width/2-1,0,2,canvas.height)
-
-}
-
-function render(freq){
-
-if(!freq)return
-
-let info=freqToNote(freq)
-
-noteEl.textContent=info.note
-freqEl.textContent=freq.toFixed(2)+" Hz"
-
-let cents=Math.round(info.cents)
-
-centsEl.textContent=(cents>0?"+":"")+cents+" cents"
-
-lastCents=cents
-
-}
-
-function loop(){
-
-analyser.getFloatTimeDomainData(data)
-
-let freq=autoCorrelate(data,audioContext.sampleRate)
-
-render(freq)
-
-drawStrobe(lastCents)
-
-requestAnimationFrame(loop)
-
-}
-
-async function start(){
-
-if(running)return
-
-audioContext=new AudioContext()
-
-const stream=await navigator.mediaDevices.getUserMedia({audio:true})
-
-const source=audioContext.createMediaStreamSource(stream)
-
-analyser=audioContext.createAnalyser()
-
-analyser.fftSize=2048
-
-source.connect(analyser)
-
-data=new Float32Array(analyser.fftSize)
-
-running=true
-
-document.getElementById("startBtn").innerText="Mic Running"
-
-loop()
-
-}
-
-document.getElementById("startBtn").onclick=start
-
+(() => {
+  const err = document.getElementById('err');
+  const showErr = (m) => { err.style.display='block'; err.textContent=m; };
+
+  window.addEventListener('error', (e) => {
+    showErr('JavaScript error:\n' + (e.message||e.type) + '\n' + (e.filename||'') + ':' + (e.lineno||''));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    showErr('Unhandled rejection:\n' + (e.reason?.message || String(e.reason)));
+  });
+
+  const startBtn = document.getElementById('startBtn');
+  const noteEl = document.getElementById('note');
+  const freqEl = document.getElementById('freq');
+  const centsEl = document.getElementById('cents');
+  const lvlFill = document.getElementById('lvl');
+  const rmsEl = document.getElementById('rms');
+
+  const canvas = document.getElementById('strobe');
+  const ctx = canvas.getContext('2d');
+
+  // ----- note helpers -----
+  const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
+  function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
+  function midiToName(m){
+    const mi = Math.round(m);
+    const name = NAMES[(mi%12+12)%12];
+    const oct = Math.floor(mi/12)-1;
+    return name+oct;
+  }
+  function centsOff(f, ref){ return 1200*Math.log2(f/ref); }
+
+  function rmsOf(buf){
+    let s=0;
+    for(let i=0;i<buf.length;i++){ const v=buf[i]; s += v*v; }
+    return Math.sqrt(s/buf.length);
+  }
+
+  // ----- robust autocorrelation (simple but decent) -----
+  function autoCorrelate(buf, sampleRate){
+    const SIZE = buf.length;
+
+    const rms = rmsOf(buf);
+    const pct = Math.min(100, Math.max(0, (rms/0.06)*100));
+    lvlFill.style.width = pct.toFixed(1) + '%';
+    rmsEl.textContent = 'RMS: ' + rms.toFixed(4);
+
+    // gate
+    if (rms < 0.004) return null;
+
+    // remove DC
+    const b = new Float32Array(SIZE);
+    let mean=0;
+    for(let i=0;i<SIZE;i++) mean += buf[i];
+    mean/=SIZE;
+    for(let i=0;i<SIZE;i++) b[i]=buf[i]-mean;
+
+    const minFreq = 35, maxFreq = 650;
+    const minLag = Math.floor(sampleRate/maxFreq);
+    const maxLag = Math.min(Math.floor(sampleRate/minFreq), Math.floor(SIZE/2));
+
+    let bestLag=-1, best=0;
+
+    for(let lag=minLag; lag<=maxLag; lag++){
+      let sum=0;
+      for(let i=0;i<SIZE-lag;i++) sum += b[i]*b[i+lag];
+      const score = sum/(SIZE-lag);
+      if(score>best){ best=score; bestLag=lag; }
+    }
+
+    if(bestLag===-1 || best<0.1) return null;
+    return sampleRate / bestLag;
+  }
+
+  // ----- strobe -----
+  let strobeOffset=0;
+  let lastCents=0;
+  function drawStrobe(cents){
+    if(!Number.isFinite(cents)) cents=0;
+    const w=canvas.width, h=canvas.height;
+
+    ctx.clearRect(0,0,w,h);
+    ctx.fillStyle='#07080d';
+    ctx.fillRect(0,0,w,h);
+
+    // center line
+    ctx.fillStyle='rgba(255,255,255,.7)';
+    ctx.fillRect(w/2-1,0,2,h);
+
+    const abs=Math.abs(cents);
+    const clamp=50;
+    const c=Math.max(-clamp,Math.min(clamp,cents));
+
+    const stripeW=26, gap=16, period=stripeW+gap;
+    const maxSpeed=24;
+
+    let speed=(abs/clamp)*maxSpeed*(c<0?-1:1);
+    if(abs<5) speed=0;
+
+    strobeOffset += speed;
+    if(strobeOffset>period) strobeOffset-=period;
+    if(strobeOffset<-period) strobeOffset+=period;
+
+    const alpha = 0.35 + Math.max(0.25, 1-(abs/clamp))*0.35;
+    ctx.fillStyle = `rgba(255,190,11,${alpha})`;
+
+    for(let x=-period*2; x<w+period*2; x+=period){
+      const xp = x + (strobeOffset % period);
+      ctx.save();
+      ctx.translate(xp,0);
+      ctx.transform(1,0.18,0,1,0,0);
+      ctx.fillRect(0,0,stripeW,h);
+      ctx.restore();
+    }
+  }
+  function strobeLoop(){
+    drawStrobe(lastCents);
+    requestAnimationFrame(strobeLoop);
+  }
+  requestAnimationFrame(strobeLoop);
+
+  // ----- audio -----
+  let audioCtx, analyser, buf, rafId, stream;
+
+  async function start(){
+    err.style.display='none';
+    startBtn.disabled=true;
+    startBtn.textContent='Starting…';
+
+    try{
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+      });
+
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(audioCtx.state !== 'running') await audioCtx.resume();
+
+      const src = audioCtx.createMediaStreamSource(stream);
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.0;
+      src.connect(analyser);
+
+      buf = new Float32Array(analyser.fftSize);
+
+      const loop = () => {
+        analyser.getFloatTimeDomainData(buf);
+        const f = autoCorrelate(buf, audioCtx.sampleRate);
+
+        if(!f){
+          noteEl.textContent='—';
+          freqEl.textContent='— Hz';
+          centsEl.textContent='—';
+          rafId = requestAnimationFrame(loop);
+          return;
+        }
+
+        const m = freqToMidi(f);
+        const ref = midiToFreq(Math.round(m));
+        const cents = centsOff(f, ref);
+
+        noteEl.textContent = midiToName(m);
+        freqEl.textContent = f.toFixed(2) + ' Hz';
+        const c = Math.round(cents);
+        centsEl.textContent = (c>0?'+':'') + c + ' cents';
+        lastCents = cents;
+
+        rafId = requestAnimationFrame(loop);
+      };
+
+      loop();
+      startBtn.textContent='Mic running';
+    } catch(e){
+      startBtn.disabled=false;
+      startBtn.textContent='Start microphone';
+      showErr('Mic start failed:\n' + (e?.message || String(e)));
+    }
+  }
+
+  startBtn.addEventListener('click', start);
+
+  document.addEventListener('visibilitychange', () => {
+    if(document.hidden){
+      if(rafId) cancelAnimationFrame(rafId);
+      if(stream) stream.getTracks().forEach(t=>t.stop());
+      if(audioCtx) audioCtx.close();
+      startBtn.disabled=false;
+      startBtn.textContent='Start microphone';
+    }
+  });
+})();
 </script>
-
 </body>
 </html>
