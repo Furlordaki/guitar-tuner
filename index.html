@@ -193,19 +193,19 @@
     const abs = Math.abs(c);
 
     // If no pitch, idle scroll slowly so you can SEE movement
-    let speed;
-    if (!hasPitch){
-      speed = 1.2; // constant idle speed
-    } else {
-      const maxSpeed = 28;
-      const minSpeed = 0.8;
-      speed = minSpeed + (abs/clamp) * (maxSpeed - minSpeed);
-      speed *= (c < 0 ? -1 : 1);
-    }
+let speed;
+if (!hasPitch){
+  speed = 0.18; // slow idle drift
+} else {
+  const maxSpeed = 4.5;   // much calmer
+  const minSpeed = 0.12;  // still visible for tiny offsets
+  speed = minSpeed + (abs/clamp) * (maxSpeed - minSpeed);
+  speed *= (c < 0 ? -1 : 1);
+}
 
     strobeOffset += speed;
 
-    const stripeW = 24, gapW = 14, period = stripeW + gapW;
+    const stripeW = 36, gapW = 24, period = stripeW + gapW;
     strobeOffset = ((strobeOffset % period) + period) % period;
 
     const alpha = hasPitch ? (0.40 + Math.max(0.2, 1-(abs/clamp))*0.45) : 0.22;
@@ -220,7 +220,7 @@
       ctx.restore();
     }
 
-    dbgEl.textContent = `Strobe: cents=${c.toFixed(3)} speed=${speed.toFixed(3)} offset=${strobeOffset.toFixed(2)} pitch=${hasPitch ? 'YES' : 'NO (idle)'}`;
+    dbgEl.textContent = `Strobe: cents=${c.toFixed(2)} speed=${speed.toFixed(2)} pitch=${hasPitch ? 'YES' : 'NO (idle)'}`;
     requestAnimationFrame(drawStrobe);
   }
   requestAnimationFrame(drawStrobe);
@@ -323,3 +323,4 @@
 </script>
 </body>
 </html>
+
