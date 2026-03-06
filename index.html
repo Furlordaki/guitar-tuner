@@ -1,339 +1,691 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Strobe Guitar Tuner</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Guitar Tuner</title>
   <style>
-    body{margin:0;padding:16px;font-family:system-ui,Arial;background:#0b0c10;color:#e8e8e8}
-    .card{max-width:740px;margin:0 auto;background:#14161c;border-radius:16px;padding:16px;box-shadow:0 10px 28px rgba(0,0,0,.35)}
-    h1{margin:0 0 8px 0;font-size:22px}
-    p{margin:0 0 12px 0;opacity:.8;line-height:1.35}
-    button{width:100%;padding:12px 14px;border-radius:12px;border:1px solid rgba(255,255,255,.12);background:#3a86ff;color:white;font-weight:800;cursor:pointer}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .row{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px}
-    .box{flex:1;min-width:240px;background:#0f1117;border:1px solid rgba(255,255,255,.10);border-radius:14px;padding:12px}
-    .big{font-size:44px;font-weight:900;line-height:1}
-    .muted{opacity:.75}
-    canvas{width:100%;height:120px;border-radius:12px;border:1px solid rgba(255,255,255,.10);background:#07080d;display:block}
-    .err{display:none;margin-top:12px;padding:10px 12px;border-radius:12px;background:rgba(255,0,110,.12);border:1px solid rgba(255,0,110,.35);white-space:pre-wrap;font-size:12.5px;line-height:1.35}
-    .meter{margin-top:10px;height:12px;border-radius:999px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.10);overflow:hidden}
-    .fill{height:100%;width:0%;background:rgba(58,134,255,.9)}
-    .slider{width:100%}
-    .pill{display:inline-block;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);font-size:12px;margin-right:8px}
+    :root {
+      --bg: #0f1115;
+      --panel: #171a21;
+      --text: #e8ecf1;
+      --muted: #98a2b3;
+      --accent: #5eead4;
+      --good: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --line: #2a2f3a;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, Arial, sans-serif;
+      background: linear-gradient(180deg, #0b0d11 0%, #121722 100%);
+      color: var(--text);
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+
+    .app {
+      width: min(760px, 100%);
+      background: rgba(23, 26, 33, 0.95);
+      border: 1px solid #202532;
+      border-radius: 22px;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      margin-bottom: 20px;
+    }
+
+    .topbar {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin-bottom: 22px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 18px;
+      background: var(--accent);
+      color: #04201d;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 15px;
+    }
+
+    button:hover { filter: brightness(1.05); }
+
+    .pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      background: rgba(255,255,255,0.02);
+      font-size: 14px;
+    }
+
+    .readout {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      padding: 16px;
+      min-height: 96px;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .value {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    .value.small {
+      font-size: 24px;
+    }
+
+    .needle-wrap {
+      margin: 10px 0 16px;
+      padding: 18px 14px 22px;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--line);
+      border-radius: 22px;
+    }
+
+    .scale {
+      position: relative;
+      height: 180px;
+      overflow: hidden;
+    }
+
+    .arc {
+      position: absolute;
+      left: 50%;
+      bottom: 18px;
+      width: 420px;
+      height: 420px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      border: 2px solid transparent;
+      border-top-color: #384152;
+      border-left-color: #384152;
+      border-right-color: #384152;
+      transform-origin: center center;
+    }
+
+    .tick {
+      position: absolute;
+      left: 50%;
+      bottom: 28px;
+      width: 2px;
+      height: 18px;
+      background: #5b6476;
+      transform-origin: bottom center;
+      border-radius: 2px;
+    }
+
+    .tick.major {
+      height: 26px;
+      width: 3px;
+      background: #7a859a;
+    }
+
+    .tick.center {
+      background: var(--good);
+      height: 34px;
+      width: 4px;
+    }
+
+    .tick-label {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      color: var(--muted);
+      font-size: 12px;
+      transform-origin: center center;
+      white-space: nowrap;
+    }
+
+    .needle {
+      position: absolute;
+      left: 50%;
+      bottom: 28px;
+      width: 4px;
+      height: 118px;
+      background: linear-gradient(180deg, #f8fafc 0%, #cbd5e1 100%);
+      border-radius: 999px;
+      transform-origin: bottom center;
+      transform: translateX(-50%) rotate(0deg);
+      box-shadow: 0 0 18px rgba(255,255,255,0.18);
+    }
+
+    .needle::after {
+      content: "";
+      position: absolute;
+      left: 50%;
+      bottom: -10px;
+      width: 20px;
+      height: 20px;
+      background: #dbe4ee;
+      border-radius: 50%;
+      transform: translateX(-50%);
+      box-shadow: 0 0 0 6px rgba(255,255,255,0.05);
+    }
+
+    .center-band {
+      position: absolute;
+      left: 50%;
+      bottom: 28px;
+      width: 42px;
+      height: 120px;
+      transform: translateX(-50%);
+      background: linear-gradient(
+        180deg,
+        rgba(34,197,94,0.00) 0%,
+        rgba(34,197,94,0.12) 30%,
+        rgba(34,197,94,0.18) 70%,
+        rgba(34,197,94,0.08) 100%
+      );
+      border-radius: 999px;
+      pointer-events: none;
+    }
+
+    .status {
+      text-align: center;
+      font-size: 18px;
+      font-weight: 700;
+      margin-top: 8px;
+    }
+
+    .status.good { color: var(--good); }
+    .status.warn { color: var(--warn); }
+    .status.bad { color: var(--bad); }
+
+    .meter-wrap {
+      margin-top: 18px;
+    }
+
+    .meter-label {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+
+    .meter {
+      height: 12px;
+      border-radius: 999px;
+      background: #222734;
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+
+    .meter-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #334155 0%, #5eead4 100%);
+    }
+
+    .targets {
+      margin-top: 20px;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+
+    .target {
+      padding: 12px 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255,255,255,0.03);
+      text-align: center;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .target.active {
+      border-color: var(--accent);
+      box-shadow: inset 0 0 0 1px var(--accent);
+      color: var(--accent);
+    }
+
+    .target .name {
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .target .hz {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 720px) {
+      .readout {
+        grid-template-columns: 1fr;
+      }
+
+      .targets {
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .scale {
+        height: 160px;
+      }
+
+      .arc {
+        width: 340px;
+        height: 340px;
+      }
+
+      .needle {
+        height: 104px;
+      }
+    }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Strobe Guitar Tuner</h1>
-    <p>This version smooths pitch so cents and strobe stop jumping around.</p>
+  <div class="app">
+    <h1>Guitar Tuner</h1>
+    <div class="subtitle">Needle tuner with smoothing for standard tuning</div>
 
-    <button id="startBtn">Start microphone</button>
-    <div id="err" class="err"></div>
-
-    <div style="margin-top:10px">
-      <span class="pill" id="gatePill">Gate: 0.003</span>
-      <span class="pill" id="pitchPill">Pitch: —</span>
+    <div class="topbar">
+      <button id="startBtn">Start Microphone</button>
+      <div class="pill" id="micState">Mic: off</div>
+      <div class="pill" id="signalState">Signal: waiting</div>
     </div>
 
-    <div class="row">
-      <div class="box">
-        <div class="muted">Detected</div>
-        <div class="big" id="note">—</div>
-        <div class="muted" id="freq">— Hz</div>
-        <div class="muted" id="cents">—</div>
+    <div class="readout">
+      <div class="card">
+        <div class="label">Detected note</div>
+        <div class="value" id="noteName">--</div>
+      </div>
+      <div class="card">
+        <div class="label">Frequency</div>
+        <div class="value small"><span id="freq">0.0</span> Hz</div>
+      </div>
+      <div class="card">
+        <div class="label">Cents</div>
+        <div class="value small"><span id="cents">0.0</span></div>
+      </div>
+    </div>
 
-        <div style="margin-top:10px">
-          <div class="muted">Input level</div>
-          <div class="meter"><div class="fill" id="lvl"></div></div>
-          <div class="muted" id="rms">RMS: —</div>
-        </div>
+    <div class="needle-wrap">
+      <div class="scale" id="scale">
+        <div class="arc"></div>
+        <div class="center-band"></div>
+        <div class="needle" id="needle"></div>
+      </div>
+      <div class="status" id="statusText">Waiting for signal</div>
 
-        <div style="margin-top:12px">
-          <div class="muted">Gate (lower = more sensitive)</div>
-          <input id="gate" class="slider" type="range" min="0.001" max="0.020" step="0.001" value="0.003">
+      <div class="meter-wrap">
+        <div class="meter-label">Input level</div>
+        <div class="meter">
+          <div class="meter-fill" id="levelFill"></div>
         </div>
       </div>
+    </div>
 
-      <div class="box">
-        <div class="muted">Strobe</div>
-        <canvas id="strobe" width="900" height="240"></canvas>
-        <div class="muted" id="dbg" style="margin-top:8px;font-size:12px">Strobe: —</div>
-      </div>
+    <div class="targets" id="targets"></div>
+
+    <div class="footer-note">
+      Tip: play one string at a time, close to the microphone, and let the note ring. The needle should settle instead of twitch wildly.
     </div>
   </div>
 
-<script>
-(() => {
-  const err = document.getElementById('err');
-  const showErr = (m) => { err.style.display='block'; err.textContent=m; };
+  <script>
+    const STANDARD_TUNING = [
+      { name: "E2", freq: 82.41 },
+      { name: "A2", freq: 110.00 },
+      { name: "D3", freq: 146.83 },
+      { name: "G3", freq: 196.00 },
+      { name: "B3", freq: 246.94 },
+      { name: "E4", freq: 329.63 }
+    ];
 
-  window.addEventListener('error', (e) => {
-    showErr('JavaScript error:\\n' + (e.message || e.type));
-  });
+    const NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
 
-  const startBtn = document.getElementById('startBtn');
-  const noteEl = document.getElementById('note');
-  const freqEl = document.getElementById('freq');
-  const centsEl = document.getElementById('cents');
-  const lvlFill = document.getElementById('lvl');
-  const rmsEl = document.getElementById('rms');
-  const dbgEl = document.getElementById('dbg');
+    const startBtn = document.getElementById("startBtn");
+    const micState = document.getElementById("micState");
+    const signalState = document.getElementById("signalState");
+    const noteNameEl = document.getElementById("noteName");
+    const freqEl = document.getElementById("freq");
+    const centsEl = document.getElementById("cents");
+    const needleEl = document.getElementById("needle");
+    const statusText = document.getElementById("statusText");
+    const levelFill = document.getElementById("levelFill");
+    const scaleEl = document.getElementById("scale");
+    const targetsEl = document.getElementById("targets");
 
-  const gateSlider = document.getElementById('gate');
-  const gatePill = document.getElementById('gatePill');
-  const pitchPill = document.getElementById('pitchPill');
+    let audioContext = null;
+    let analyser = null;
+    let source = null;
+    let timeData = null;
+    let running = false;
 
-  const canvas = document.getElementById('strobe');
-  const ctx = canvas.getContext('2d');
+    let selectedTarget = STANDARD_TUNING[0];
 
-  const NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+    let smoothedFreq = null;
+    let smoothedCents = 0;
+    let displayedCents = 0;
+    let stableNoteName = "--";
 
-  function freqToMidi(f){ return 69 + 12*Math.log2(f/440); }
-  function midiToFreq(m){ return 440*Math.pow(2,(m-69)/12); }
-  function midiToName(m){
-    const mi = Math.round(m);
-    const name = NAMES[(mi % 12 + 12) % 12];
-    const oct = Math.floor(mi / 12) - 1;
-    return name + oct;
-  }
-  function centsOff(f, ref){ return 1200 * Math.log2(f / ref); }
+    const NOISE_FLOOR = 0.012;
+    const MIN_CONFIDENCE = 0.85;
+    const MIN_FREQ = 70;
+    const MAX_FREQ = 360;
 
-  function rmsOf(buf){
-    let s = 0;
-    for(let i = 0; i < buf.length; i++){
-      const v = buf[i];
-      s += v * v;
-    }
-    return Math.sqrt(s / buf.length);
-  }
+    // How fast values settle. Lower = smoother, slower.
+    const FREQ_SMOOTH = 0.18;
+    const CENTS_SMOOTH = 0.14;
+    const NEEDLE_SMOOTH = 0.22;
 
-  function yinPitch(buf, sampleRate, minFreq = 35, maxFreq = 650){
-    const N = buf.length;
-    const minTau = Math.floor(sampleRate / maxFreq);
-    const maxTau = Math.min(Math.floor(sampleRate / minFreq), N - 2);
-    if (maxTau <= minTau + 2) return null;
-
-    const d = new Float32Array(maxTau + 1);
-    for (let tau = 1; tau <= maxTau; tau++){
-      let sum = 0;
-      for (let i = 0; i < N - tau; i++){
-        const delta = buf[i] - buf[i + tau];
-        sum += delta * delta;
-      }
-      d[tau] = sum;
-    }
-
-    const cmnd = new Float32Array(maxTau + 1);
-    cmnd[0] = 1;
-    let run = 0;
-    for (let tau = 1; tau <= maxTau; tau++){
-      run += d[tau];
-      cmnd[tau] = d[tau] * tau / (run || 1);
-    }
-
-    const threshold = 0.18;
-    let tau = -1;
-    for (let t = minTau; t <= maxTau; t++){
-      if (cmnd[t] < threshold){
-        while (t + 1 <= maxTau && cmnd[t + 1] < cmnd[t]) t++;
-        tau = t;
-        break;
-      }
-    }
-
-    if (tau === -1) return null;
-
-    const t0 = tau - 1, t1 = tau, t2 = tau + 1;
-    if (t0 < 1 || t2 > maxTau) return null;
-
-    const s0 = cmnd[t0], s1 = cmnd[t1], s2 = cmnd[t2];
-    const denom = (2 * s1 - s0 - s2);
-    const betterTau = denom ? (t1 + (s0 - s2) / (2 * denom)) : t1;
-
-    const freq = sampleRate / betterTau;
-    const conf = 1 - cmnd[tau];
-
-    if (!Number.isFinite(freq) || freq < minFreq || freq > maxFreq) return null;
-    return { freq, conf };
-  }
-
-  let gate = Number(gateSlider.value);
-  gatePill.textContent = `Gate: ${gate.toFixed(3)}`;
-  gateSlider.addEventListener('input', () => {
-    gate = Number(gateSlider.value);
-    gatePill.textContent = `Gate: ${gate.toFixed(3)}`;
-  });
-
-  let strobeOffset = 0;
-  let lastCents = 0;
-  let hasPitch = false;
-
-  let freqHistory = [];
-  const SMOOTHING_WINDOW = 6;
-
-  function smoothFrequency(freq) {
-    freqHistory.push(freq);
-    if (freqHistory.length > SMOOTHING_WINDOW) {
-      freqHistory.shift();
-    }
-
-    let sum = 0;
-    for (let i = 0; i < freqHistory.length; i++) {
-      sum += freqHistory[i];
-    }
-    return sum / freqHistory.length;
-  }
-
-  function resetSmoothing() {
-    freqHistory = [];
-  }
-
-  function drawStrobe(){
-    const w = canvas.width, h = canvas.height;
-    ctx.clearRect(0,0,w,h);
-    ctx.fillStyle = '#07080d';
-    ctx.fillRect(0,0,w,h);
-
-    ctx.fillStyle = 'rgba(255,255,255,.85)';
-    ctx.fillRect(w/2 - 1, 0, 2, h);
-
-    const clamp = 50;
-    const c = Math.max(-clamp, Math.min(clamp, lastCents));
-    const abs = Math.abs(c);
-
-    let speed;
-    if (!hasPitch){
-      speed = 0.10;
-    } else {
-      const maxSpeed = 2.2;
-      const minSpeed = 0.05;
-      speed = minSpeed + (abs / clamp) * (maxSpeed - minSpeed);
-      speed *= (c < 0 ? -1 : 1);
-    }
-
-    strobeOffset += speed;
-
-    const stripeW = 42, gapW = 30, period = stripeW + gapW;
-    strobeOffset = ((strobeOffset % period) + period) % period;
-
-    const alpha = hasPitch ? 0.55 : 0.18;
-    ctx.fillStyle = `rgba(255,190,11,${alpha})`;
-
-    for(let x = -period * 2; x < w + period * 2; x += period){
-      const xp = x + strobeOffset;
-      ctx.save();
-      ctx.translate(xp, 0);
-      ctx.transform(1, 0.18, 0, 1, 0, 0);
-      ctx.fillRect(0, 0, stripeW, h);
-      ctx.restore();
-    }
-
-    dbgEl.textContent = `Strobe: cents=${c.toFixed(2)} speed=${speed.toFixed(2)} pitch=${hasPitch ? 'YES' : 'NO'}`;
-    requestAnimationFrame(drawStrobe);
-  }
-  requestAnimationFrame(drawStrobe);
-
-  let audioCtx, analyser, buf, rafId, stream;
-
-  async function start(){
-    err.style.display = 'none';
-    startBtn.disabled = true;
-    startBtn.textContent = 'Starting…';
-
-    try{
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    function buildTargets() {
+      targetsEl.innerHTML = "";
+      STANDARD_TUNING.forEach((t, index) => {
+        const div = document.createElement("div");
+        div.className = "target" + (index === 0 ? " active" : "");
+        div.innerHTML = `
+          <div class="name">${t.name}</div>
+          <div class="hz">${t.freq.toFixed(2)} Hz</div>
+        `;
+        div.addEventListener("click", () => {
+          selectedTarget = t;
+          document.querySelectorAll(".target").forEach(x => x.classList.remove("active"));
+          div.classList.add("active");
+        });
+        targetsEl.appendChild(div);
       });
+    }
 
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      if (audioCtx.state !== 'running') await audioCtx.resume();
+    function buildScale() {
+      const existing = scaleEl.querySelectorAll(".tick, .tick-label");
+      existing.forEach(el => el.remove());
 
-      const src = audioCtx.createMediaStreamSource(stream);
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 2048;
-      analyser.smoothingTimeConstant = 0.0;
-      src.connect(analyser);
+      const centerX = scaleEl.clientWidth / 2;
+      const baseY = 152;
+      const radius = Math.min(scaleEl.clientWidth * 0.38, 180);
 
-      buf = new Float32Array(analyser.fftSize);
+      for (let cents = -50; cents <= 50; cents += 5) {
+        const angle = (cents / 50) * 45; // -45 to +45 degrees
+        const rad = (Math.PI / 180) * angle;
 
-      const loop = () => {
-        analyser.getFloatTimeDomainData(buf);
+        const tick = document.createElement("div");
+        tick.className = "tick";
+        if (cents % 10 === 0) tick.classList.add("major");
+        if (cents === 0) tick.classList.add("center");
 
-        const rms = rmsOf(buf);
-        const pct = Math.min(100, Math.max(0, (rms / 0.06) * 100));
-        lvlFill.style.width = pct.toFixed(1) + '%';
-        rmsEl.textContent = 'RMS: ' + rms.toFixed(4);
+        const x = centerX + Math.sin(rad) * radius;
+        const y = baseY - Math.cos(rad) * radius;
 
-        if (rms < gate){
-          hasPitch = false;
-          pitchPill.textContent = 'Pitch: —';
-          noteEl.textContent = '—';
-          freqEl.textContent = '— Hz';
-          centsEl.textContent = '—';
-          lastCents = 0;
-          resetSmoothing();
-          rafId = requestAnimationFrame(loop);
-          return;
+        tick.style.left = `${x}px`;
+        tick.style.bottom = `${scaleEl.clientHeight - y}px`;
+        tick.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+        scaleEl.appendChild(tick);
+
+        if (cents % 10 === 0) {
+          const label = document.createElement("div");
+          label.className = "tick-label";
+          const labelRadius = radius + 28;
+          const lx = centerX + Math.sin(rad) * labelRadius;
+          const ly = baseY - Math.cos(rad) * labelRadius;
+          label.style.left = `${lx}px`;
+          label.style.bottom = `${scaleEl.clientHeight - ly}px`;
+          label.style.transform = `translateX(-50%)`;
+          label.textContent = cents > 0 ? `+${cents}` : `${cents}`;
+          scaleEl.appendChild(label);
         }
+      }
+    }
 
-        const res = yinPitch(buf, audioCtx.sampleRate, 35, 650);
-        if (!res){
-          hasPitch = false;
-          pitchPill.textContent = 'Pitch: —';
-          noteEl.textContent = '—';
-          freqEl.textContent = '— Hz';
-          centsEl.textContent = '—';
-          lastCents = 0;
-          resetSmoothing();
-          rafId = requestAnimationFrame(loop);
-          return;
-        }
+    function midiFromFreq(freq) {
+      return Math.round(69 + 12 * Math.log2(freq / 440));
+    }
 
-        hasPitch = true;
+    function noteNameFromMidi(midi) {
+      const name = NOTE_NAMES[midi % 12];
+      const octave = Math.floor(midi / 12) - 1;
+      return `${name}${octave}`;
+    }
 
-        const rawFreq = res.freq;
-        const f = smoothFrequency(rawFreq);
+    function centsOffFromTarget(freq, targetFreq) {
+      return 1200 * Math.log2(freq / targetFreq);
+    }
 
-        pitchPill.textContent = `Pitch: ${f.toFixed(1)} Hz (conf ${res.conf.toFixed(2)})`;
-
-        const m = freqToMidi(f);
-        const ref = midiToFreq(Math.round(m));
-        const cents = centsOff(f, ref);
-
-        noteEl.textContent = midiToName(m);
-        freqEl.textContent = f.toFixed(2) + ' Hz';
-        centsEl.textContent = (cents >= 0 ? '+' : '') + cents.toFixed(2) + ' cents';
-
-        lastCents = cents;
-
-        rafId = requestAnimationFrame(loop);
+    function nearestNote(freq) {
+      const midi = midiFromFreq(freq);
+      const targetFreq = 440 * Math.pow(2, (midi - 69) / 12);
+      return {
+        midi,
+        noteName: noteNameFromMidi(midi),
+        targetFreq,
+        cents: centsOffFromTarget(freq, targetFreq)
       };
-
-      loop();
-      startBtn.textContent = 'Mic running';
-    } catch(e){
-      startBtn.disabled = false;
-      startBtn.textContent = 'Start microphone';
-      showErr('Mic start failed:\\n' + (e?.message || String(e)));
     }
-  }
 
-  startBtn.addEventListener('click', start);
-
-  document.addEventListener('visibilitychange', () => {
-    if(document.hidden){
-      if(rafId) cancelAnimationFrame(rafId);
-      if(stream) stream.getTracks().forEach(t => t.stop());
-      if(audioCtx) audioCtx.close();
-      startBtn.disabled = false;
-      startBtn.textContent = 'Start microphone';
-      hasPitch = false;
-      lastCents = 0;
-      resetSmoothing();
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
     }
-  });
-})();
-</script>
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function getRMS(buffer) {
+      let sum = 0;
+      for (let i = 0; i < buffer.length; i++) {
+        const v = buffer[i];
+        sum += v * v;
+      }
+      return Math.sqrt(sum / buffer.length);
+    }
+
+    // A cleaner autocorrelation pitch detector with light quality check
+    function detectPitch(buffer, sampleRate) {
+      const size = buffer.length;
+      const rms = getRMS(buffer);
+      if (rms < NOISE_FLOOR) {
+        return { freq: null, clarity: 0, rms };
+      }
+
+      let bestOffset = -1;
+      let bestCorr = 0;
+      let foundGood = false;
+      const correlations = new Array(size).fill(0);
+
+      const minOffset = Math.floor(sampleRate / MAX_FREQ);
+      const maxOffset = Math.floor(sampleRate / MIN_FREQ);
+
+      for (let offset = minOffset; offset <= maxOffset; offset++) {
+        let diff = 0;
+        for (let i = 0; i < size - offset; i++) {
+          diff += Math.abs(buffer[i] - buffer[i + offset]);
+        }
+
+        const corr = 1 - diff / (size - offset);
+        correlations[offset] = corr;
+
+        if (corr > MIN_CONFIDENCE && corr > bestCorr) {
+          foundGood = true;
+          bestCorr = corr;
+          bestOffset = offset;
+        } else if (foundGood && corr < bestCorr * 0.92) {
+          // once we've passed the best likely peak, stop early
+          break;
+        }
+      }
+
+      if (bestOffset === -1) {
+        return { freq: null, clarity: bestCorr, rms };
+      }
+
+      // Parabolic refinement around the best peak
+      const x1 = correlations[bestOffset - 1] || correlations[bestOffset];
+      const x2 = correlations[bestOffset];
+      const x3 = correlations[bestOffset + 1] || correlations[bestOffset];
+      const a = (x1 + x3 - 2 * x2) / 2;
+      const b = (x3 - x1) / 2;
+
+      let refinedOffset = bestOffset;
+      if (a !== 0) {
+        refinedOffset = bestOffset - b / (2 * a);
+      }
+
+      const freq = sampleRate / refinedOffset;
+      if (!isFinite(freq) || freq < MIN_FREQ || freq > MAX_FREQ) {
+        return { freq: null, clarity: bestCorr, rms };
+      }
+
+      return { freq, clarity: bestCorr, rms };
+    }
+
+    function updateUI(hasSignal, freq, cents, rms, noteText) {
+      signalState.textContent = hasSignal ? "Signal: detected" : "Signal: waiting";
+      noteNameEl.textContent = hasSignal ? noteText : "--";
+      freqEl.textContent = hasSignal ? freq.toFixed(1) : "0.0";
+      centsEl.textContent = hasSignal ? cents.toFixed(1) : "0.0";
+
+      const levelPercent = clamp((rms / 0.08) * 100, 0, 100);
+      levelFill.style.width = `${levelPercent}%`;
+
+      const needleCents = clamp(displayedCents, -50, 50);
+      const angle = (needleCents / 50) * 45;
+      needleEl.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+
+      if (!hasSignal) {
+        statusText.textContent = "Waiting for signal";
+        statusText.className = "status";
+        return;
+      }
+
+      const absCents = Math.abs(cents);
+      if (absCents <= 4) {
+        statusText.textContent = "In tune";
+        statusText.className = "status good";
+      } else if (absCents <= 10) {
+        statusText.textContent = cents < 0 ? "Slightly flat" : "Slightly sharp";
+        statusText.className = "status warn";
+      } else {
+        statusText.textContent = cents < 0 ? "Flat" : "Sharp";
+        statusText.className = "status bad";
+      }
+    }
+
+    function processAudio() {
+      if (!running || !analyser) return;
+
+      analyser.getFloatTimeDomainData(timeData);
+      const result = detectPitch(timeData, audioContext.sampleRate);
+
+      if (!result.freq) {
+        smoothedFreq = null;
+        smoothedCents = lerp(smoothedCents, 0, 0.08);
+        displayedCents = lerp(displayedCents, 0, 0.08);
+        updateUI(false, 0, 0, result.rms, "--");
+        requestAnimationFrame(processAudio);
+        return;
+      }
+
+      // Smooth frequency
+      smoothedFreq = smoothedFreq == null
+        ? result.freq
+        : lerp(smoothedFreq, result.freq, FREQ_SMOOTH);
+
+      const note = nearestNote(smoothedFreq);
+
+      // Keep note label stable by preferring selected string when near it
+      let displayNote = note.noteName;
+      let rawCents = note.cents;
+
+      if (selectedTarget) {
+        const selectedCents = centsOffFromTarget(smoothedFreq, selectedTarget.freq);
+        if (Math.abs(selectedCents) < 35) {
+          displayNote = selectedTarget.name;
+          rawCents = selectedCents;
+        }
+      }
+
+      smoothedCents = lerp(smoothedCents, rawCents, CENTS_SMOOTH);
+      displayedCents = lerp(displayedCents, smoothedCents, NEEDLE_SMOOTH);
+      stableNoteName = displayNote;
+
+      updateUI(true, smoothedFreq, smoothedCents, result.rms, stableNoteName);
+      requestAnimationFrame(processAudio);
+    }
+
+    async function startMic() {
+      try {
+        if (!audioContext) {
+          audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false
+          }
+        });
+
+        source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0;
+        source.connect(analyser);
+
+        timeData = new Float32Array(analyser.fftSize);
+
+        running = true;
+        micState.textContent = "Mic: on";
+        startBtn.textContent = "Microphone Running";
+        startBtn.disabled = true;
+
+        processAudio();
+      } catch (err) {
+        console.error(err);
+        micState.textContent = "Mic: failed";
+        statusText.textContent = "Microphone access denied or unavailable";
+        statusText.className = "status bad";
+      }
+    }
+
+    startBtn.addEventListener("click", startMic);
+    window.addEventListener("resize", buildScale);
+
+    buildTargets();
+    buildScale();
+  </script>
 </body>
 </html>
